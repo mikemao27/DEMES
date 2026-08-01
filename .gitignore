@@ -1,0 +1,25 @@
+# Folders to Hide
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+dist
+build
+.pytest_cache
+node_modules
+
+# Environment Variables to Hide
+.env
+.env.*
+.vscode
+
+# Show Example .env File for Users to Replicate
+!.env.example
+
+# Editor and IDE Settings
+.vscode/settings.json
+.idea
+
+# If Generative AI is Used, Hide Such Folders
+.claude

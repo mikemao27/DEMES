@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use the DEMES model software or the NLU ideas presented here in your work, please cite it as follows."
+type: software
+title: "DEMES: Deconstructive Encoding of Meaning and Expressive Syntax"
+abstract: >
+  DEMES is a project with the aim of developing a differentiable neural symbolic reasoning framework for natural language processing (NLP) and 
+  natural language understanding (NLU) tasks. The framework integrates symbolic reasoning capabilities with neural network architectures, enabling 
+  more interpretable and robust AI systems. The English language is encoded into a set of word primitives that constitute mathematical changes in a World Model, 
+  solving Harnad's Symbol Grounding Problem by encoding meaning not as a circular definition referencing other words, but as mathematical changes in a system. This 
+  is what we deem to be "Deconstructive Encoding of Meaning and Expressive Syntax" (DEMES). We only utilize free, locally-run, open-source LLMs for input and output 
+  formatting to avoid rigid responses and capture uncertain or ambiguous language. Due to the mathematical encoding of meaning, DEMES is able to handle the English language 
+  without any risk of hallucinations.
+authors:
+  - family-names: "Mao"
+    given-names: "Mike"
+    email: "mikemao1027@gmail.com"
+    affiliation: "Rice University"
+repository-code: "https://github.com/mikemao27/Sproot"
+license: Apache-2.0
+version: "1.0.0"
+keywords: 
+  - "world model"
+  - "natural language understanding"
+  - "natural language processing"
+  - "scaled dot-product attention"
+  - "bidirectional attention"
+  - "masked attention"
