@@ -1,0 +1,4 @@
+# DEMES: Deconstructive Encoding of Meaning and Expressive Syntax
+# Nnote: The core symbolic engine requires zero external dependencies.
+# The presentation layer optionally uses llama-cpp-python for local GGUF model inference.
+llama-cpp-python>=0.2.85

@@ -29,14 +29,14 @@ class TestLogicalForm(unittest.TestCase):
         self.assertIsNone(form.quantifier_meta)
 
     def test_to_dict_includes_quantifier_meta(self):
-        form = LogicalForm(predicat = "PORTABLE", arguments = ["suitcase"])
+        form = LogicalForm(predicate = "PORTABLE", arguments = ["suitcase"])
         form.quantifier_meta = {"operator": "FORALL", "variable": "x", "restrictor": "SUITCASE"}
         as_dict = form.to_dict()
         self.assertEqual(as_dict["quantifier_meta"]["operator"], "FORALL")
 
     def test_to_dict_nested_logical_form_argument(self):
         inner = LogicalForm(predicate = "EAT", arguments = ["dog", "food"])
-        outer = LogicalForm(predicate = "KNOW", argument = ["john", inner])
+        outer = LogicalForm(predicate = "KNOW", arguments = ["john", inner])
         as_dict = outer.to_dict()
         self.assertEqual(as_dict["arguments"][1]["predicate"], "EAT")
 

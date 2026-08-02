@@ -1,0 +1,2 @@
+# Place your local .gguf model files here (e.g., llama-3b.gguf)
+# If left empty, DEMES will gracefully run in structured text fallback mode.

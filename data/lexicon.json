@@ -1,0 +1,187 @@
+{
+    "walk": {
+        "category": "verb",
+        "semantic_type": "<e, t>",
+        "primitives": [{"name": "MOVE", "category": "action"}, {"name": "LEGS", "category": "entity"}],
+        "valency": "intransitive",
+        "senses": [{"sense_key": "walk.v.locomotion", "selectional_constraint": "ANIMATE_ENTITY"}]
+    },
+    "run": {
+        "category": "verb",
+        "semantic_type": "<e, t>",
+        "primitives": [{"name": "MOVE_FAST", "category": "action"}],
+        "valency": "intransitive",
+        "senses": [{"sense_key": "run.v.fast_locomotion", "selectional_constraint": "ANIMATE_ENTITY"}]
+    },
+    "eat": {
+        "category": "verb",
+        "semantic_type": "<e, <e, t>>",
+        "primitives": [{"name": "INGEST", "category": "action"}, {"name": "NOURISHMENT", "category": "object"}],
+        "valency": "transitive",
+        "senses": [{"sense_key": "eat.v.consume_food", "selectional_constraint": "FOOD"}]
+    },
+    "take": {
+        "category": "verb",
+        "semantic_type": "<e, <e, t>>",
+        "primitives": [{"name": "ACQUIRE", "category": "action"}],
+        "valency": "transitive",
+        "senses": [{"sense_key": "take.v.grasp_or_obtain", "selectional_constraint": "PHYSICAL_OBJECT"}]
+    },
+    "make": {
+        "category": "verb",
+        "semantic_type": "<e, <e, t>>",
+        "primitives": [{"name": "CREATE", "category": "action"}],
+        "valency": "transitive",
+        "senses": [{"sense_key": "make.v.construct", "selectional_constraint": "ANY"}]
+    },
+    "give": {
+        "category": "verb",
+        "semantic_type": "<e, <e, <e, t>>>",
+        "primitives": [{"name": "TRANSFER", "category": "action"}],
+        "valency": "ditransitive",
+        "senses": [{"sense_key": "give.v.transfer_possession", "selectional_constraint": "PHYSICAL_OBJECT"}]
+    },
+    "see": {
+        "category": "verb",
+        "semantic_type": "<e, <e, t>>",
+        "primitives": [{"name": "PERCEIVE_VISUAL", "category": "action"}],
+        "valency": "transitive",
+        "senses": [{"sense_key": "see.v.visual_perception", "selectional_constraint": "PHYSICAL_ENTITY"}]
+    },
+    "know": {
+        "category": "verb",
+        "semantic_type": "<e, <e, t>>",
+        "primitives": [{"name": "COGNITION", "category": "mental_state"}],
+        "valency": "transitive",
+        "senses": [{"sense_key": "know.v.comprehend", "selectional_constraint": "ANY"}]
+    },
+    "suitcase": {
+        "category": "noun",
+        "semantic_type": "e",
+        "primitives": [{"name": "CONTAINER", "category": "object"}, {"name": "PORTABLE", "category": "property"}],
+        "valency": "none",
+        "senses": [{"sense_key": "suitcase.n.luggage", "selectional_constraint": "PHYSICAL_OBJECT"}]
+    },
+    "dog": {
+        "category": "noun",
+        "semantic_type": "e",
+        "primitives": [{"name": "ANIMAL", "category": "entity"}, {"name": "CANINE", "category": "property"}],
+        "valency": "none",
+        "senses": [{"sense_key": "dog.n.animal", "selectional_constraint": "ANIMATE_ENTITY"}]
+    },
+    "cat": {
+        "category": "noun",
+        "semantic_type": "e",
+        "primitives": [{"name": "ANIMAL", "category": "entity"}, {"name": "FELINE", "category": "property"}],
+        "valency": "none",
+        "senses": [{"sense_key": "cat.n.animal", "selectional_constraint": "ANIMATE_ENTITY"}]
+    },
+    "person": {
+        "category": "noun",
+        "semantic_type": "e",
+        "primitives": [{"name": "HUMAN", "category": "entity"}, {"name": "INTELLIGENT", "category": "property"}],
+        "valency": "none",
+        "senses": [{"sense_key": "person.n.human", "selectional_constraint": "HUMAN_ENTITY"}]
+    },
+    "car": {
+        "category": "noun",
+        "semantic_type": "e",
+        "primitives": [{"name": "VEHICLE", "category": "object"}, {"name": "WHEELS", "category": "property"}],
+        "valency": "none",
+        "senses": [{"sense_key": "car.n.motor_vehicle", "selectional_constraint": "PHYSICAL_OBJECT"}]
+    },
+    "house": {
+        "category": "noun",
+        "semantic_type": "e",
+        "primitives": [{"name": "BUILDING", "category": "object"}, {"name": "DWELLING", "category": "property"}],
+        "valency": "none",
+        "senses": [{"sense_key": "house.n.building", "selectional_constraint": "PHYSICAL_OBJECT"}]
+    },
+    "water": {
+        "category": "noun",
+        "semantic_type": "e",
+        "primitives": [{"name": "LIQUID", "category": "substance"}],
+        "valency": "none",
+        "senses": [{"sense_key": "water.n.liquid_substance", "selectional_constraint": "SUBSTANCE"}]
+    },
+    "food": {
+        "category": "noun",
+        "semantic_type": "e",
+        "primitives": [{"name": "NOURISHMENT", "category": "substance"}],
+        "valency": "none",
+        "senses": [{"sense_key": "food.n.sustenance", "selectional_constraint": "FOOD"}]
+    },
+    "portable": {
+        "category": "adjective",
+        "semantic_type": "<e, t>",
+        "primitives": [{"name": "PORTABLE", "category": "property"}],
+        "valency": "none",
+        "senses": [{"sense_key": "portable.adj.easily_moved", "selectional_constraint": "PHYSICAL_ENTITY"}]
+    },
+    "heavy": {
+        "category": "adjective",
+        "semantic_type": "<e, t>",
+        "primitives": [{"name": "MASS", "category": "property"}, {"name": "HIGH", "category": "modifier"}],
+        "valency": "none",
+        "senses": [{"sense_key": "heavy.adj.high_weight", "selectional_constraint": "PHYSICAL_OBJECT"}]
+    },
+    "big": {
+        "category": "adjective",
+        "semantic_type": "<e, t>",
+        "primitives": [{"name": "SIZE", "category": "property"}, {"name": "LARGE", "category": "modifier"}],
+        "valency": "none",
+        "senses": [{"sense_key": "big.adj.large_size", "selectional_constraint": "PHYSICAL_ENTITY"}]
+    },
+    "small": {
+        "category": "adjective",
+        "semantic_type": "<e, t>",
+        "primitives": [{"name": "SIZE", "category": "property"}, {"name": "LITTLE", "category": "modifier"}],
+        "valency": "none",
+        "senses": [{"sense_key": "small.adj.little_size", "selectional_constraint": "PHYSICAL_ENTITY"}]
+    },
+    "fast": {
+        "category": "adjective",
+        "semantic_type": "<e, t>",
+        "primitives": [{"name": "SPEED", "category": "property"}, {"name": "HIGH", "category": "modifier"}],
+        "valency": "none",
+        "senses": [{"sense_key": "fast.adj.high_speed", "selectional_constraint": "ENTITY"}]
+    },
+    "good": {
+        "category": "adjective",
+        "semantic_type": "<e, t>",
+        "primitives": [{"name": "VALENCE", "category": "property"}, {"name": "POSITIVE", "category": "modifier"}],
+        "valency": "none",
+        "senses": [{"sense_key": "good.adj.positive_value", "selectional_constraint": "ANY"}]
+    },
+    "bad": {
+        "category": "adjective",
+        "semantic_type": "<e, t>",
+        "primitives": [{"name": "VALENCE", "category": "property"}, {"name": "NEGATIVE", "category": "modifier"}],
+        "valency": "none",
+        "senses": [{"sense_key": "bad.adj.negative_value", "selectional_constraint": "ANY"}]
+    },
+    "bank": {
+        "category": "noun",
+        "semantic_type": "e",
+        "primitives": [],
+        "valency": "none",
+        "senses": [
+            {"sense_key": "bank.n.financial_institution", "selectional_constraint": "INSTITUTION"},
+            {"sense_key": "bank.n.river_side", "selectional_constraint": "GEOGRAPHICAL_FEATURE"}
+        ]
+    },
+    "it": {
+        "category": "pronoun",
+        "semantic_type": "e",
+        "primitives": [{"name": "PRONOUN", "category": "functional"}],
+        "valency": "none",
+        "senses": [{"sense_key": "it.pron.neuter", "selectional_constraint": "INANIMATE_ENTITY"}]
+    },
+    "they": {
+        "category": "pronoun",
+        "semantic_type": "e",
+        "primitives": [{"name": "PRONOUN", "category": "functional"}],
+        "valency": "none",
+        "senses": [{"sense_key": "they.pron.plural", "selectional_constraint": "PLURAL_ENTITY"}]
+    }
+}

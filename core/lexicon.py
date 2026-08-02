@@ -28,29 +28,39 @@ class LexiconManager:
 
     def load_lexicon(self) -> None:
         """
-        Loads the persistent lexicon from disk, initializing a default base if missing.
+        Loads the persistent lexicon from disk, handling empty or missing files gracefully.
         """
-        if os.path.exists(self.store_path):
-            with open(self.store_path, "r", encoding = "utf-8") as file:
-                self.lexicon = json.load(file)
-
-        else:
-            # Seed with foundational bootstrap primitives and core function words.
-            self.lexicon = {
-                "walk": {
-                    "category": "verb",
-                    "semantic_type": "<e, t>",
-                    "primitives": [{"name": "MOVE", "category": "action"}, {"name": "LEGS", "category": "entity"}],
-                    "valency": " intransitive"
-                },
-                "suitcase": {
-                    "category": "noun",
-                    "semantic_type": "e",
-                    "primitives": [{"name": "CONTAINER", "category": "object"}, {"name": "PORTABLE", "category": "property"}],
-                    "valency": "none"
-                }
+        if os.path.exists(self.store_path) and os.path.getsize(self.store_path) > 0:
+            try:
+                with open(self.store_path, "r", encoding="utf-8") as f:
+                    self.lexicon = json.load(f)
+                    return
+            
+            except json.JSONDecodeError:
+                pass # Fall back to seeding if JSON is corrupt or empty.
+        
+        # Seed with foundational bootstrap primitives and core function words.
+        self.lexicon = {
+            "walk": {
+                "category": "verb",
+                "semantic_type": "<e, t>",
+                "primitives": [{"name": "MOVE", "category": "action"}, {"name": "LEGS", "category": "entity"}],
+                "valency": "intransitive"
+            },
+            "suitcase": {
+                "category": "noun",
+                "semantic_type": "e",
+                "primitives": [{"name": "CONTAINER", "category": "object"}, {"name": "PORTABLE", "category": "property"}],
+                "valency": "none"
+            },
+            "portable": {
+                "category": "adjective",
+                "semantic_type": "<e, t>",
+                "primitives": [{"name": "PORTABLE", "category": "property"}],
+                "valency": "none"
             }
-            self.save_lexicon()
+        }
+        self.save_lexicon()
 
     def save_lexicon(self) -> None:
         """

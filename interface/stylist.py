@@ -8,7 +8,7 @@ How it solves the problem:
 """
 
 import os
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 # Minimal prompt template locking the local SLM strictly into a surface realization role.
 STYLING_PROMPT_TEMPLATE = """
@@ -30,8 +30,9 @@ class LocalStylist:
     to handle conversational tone rendering.
     """
 
-    def __init__(self, model_path: str = "demes/data/models/llama-3b.gguf"):
-        self.model_path = model_path
+    def __init__(self, model_path: Optional[str] = None):
+        # Allow overriding via environment variable or argument.
+        self.model_path = model_path or os.getenv("DEMES_MODEL_PATH", "demes/data/models/llama-3b.gguf")
         self.llm = None
         self._initialize_model()
 
