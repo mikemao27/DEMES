@@ -172,6 +172,19 @@ class ContextIndex:
     def is_root(self) -> bool:
         return self.parent_id is None
 
+class ThematicRole(Enum):
+    """
+    The closed set of "who did what to whom" roles an event's participants can fill (standard case-grammar roles). Storing "John kicked the ball" as AGENT = john, PATIENT = ball 
+    instead of a flat, order-dependent argument list means "who did the kicking" is never ambiguous the way a positional list would leave it once sentences get more complex than simple SVO.
+    """
+    AGENT = "agent"
+    PATIENT = "patient"
+    THEME = "theme"
+    INSTRUMENT = "instrument"
+    LOCATION = "location"
+    TIME = "time"
+
+
 @dataclass
 class Entity:
     """
