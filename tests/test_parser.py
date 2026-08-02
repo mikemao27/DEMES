@@ -74,7 +74,9 @@ class TestDEMESCore(unittest.TestCase):
         self.assertIsNone(form)
 
     def test_semantic_compiler_evaluation(self):
-        """Verify semantic evaluation payload generation."""
+        """
+        Verify semantic evaluation payload generation.
+        """
         form = self.parser.parse("The suitcase is portable.")
         payload = self.compiler.compile_and_evaluate(form)
         self.assertEqual(payload["status"], "success")
@@ -84,7 +86,7 @@ class TestDEMESCore(unittest.TestCase):
         """
         Verify dynamic word induction via structural bootstrapping.
         """
-        self.lexicon.induce_word("blick", "verb", [{"name": "ACTION", "category": "action"}])
+        self.lexicon.induce_word("blick", "verb", [{"name": "MOVE", "category": "action"}])
         def_data = self.lexicon.get_word_definition("blick")
         self.assertIsNotNone(def_data)
         self.assertEqual(def_data["category"], "verb")

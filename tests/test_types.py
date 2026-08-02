@@ -85,7 +85,7 @@ class TestEventRecordReichenbachTime(unittest.TestCase):
 
 class TestDerivationNodeDominance(unittest.TestCase):
     def setUp(self):
-        # A tiny tree shaped like: S -> [NP("he"), VP -> [V("entered"), NP("the room")]]
+        # A tiny tree shaped like: S -> [NP("he"), VP -> [V("entered"), NP("the room")]].
         self.he = DerivationNode(label = "NP", token = "he", span = (0, 1))
         self.entered = DerivationNode(label = "V", token = "entered", span = (1, 2))
         self.the_room = DerivationNode(label = "NP", token = "room", span = (2, 4))

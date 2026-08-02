@@ -67,13 +67,11 @@ def primitive_categories() -> Tuple[str, ...]:
     """
     return tuple(_PRIMITIVE_TABLE.keys())
 
-
 def primitives_in_category(category: str) -> Tuple[str, ...]:
     """
     Returns every primitive name that belongs to the given category, or an empty tuple if the category name isn't recognized.
     """
     return _PRIMITIVE_TABLE.get(category, ())
-
 
 def is_valid_primitive(name: str) -> bool:
     """
@@ -82,7 +80,6 @@ def is_valid_primitive(name: str) -> bool:
     the same convention already used throughout the lexicon.
     """
     return name in ALL_PRIMITIVES
-
 
 def validate_primitives(primitives: List[Dict]) -> List[str]:
     """
@@ -99,7 +96,6 @@ def validate_primitives(primitives: List[Dict]) -> List[str]:
             invalid_names.append(name)
 
     return invalid_names
-
 
 class InvalidPrimitiveError(ValueError):
     """

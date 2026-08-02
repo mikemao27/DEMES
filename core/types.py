@@ -75,10 +75,43 @@ class Aktionsart(Enum):
     ACCOMPLISHMENT = "accomplishment"
     ACHIEVEMENT = "achievement"
 
+class FrameTemplate(Enum):
+    """
+    The closed set of relation shapes a word's meaning can be built out of, one level up from the primitives themselves. Knowing that "portable" involves the 
+    primitive CAN isn't yet a meaning: HAS-PROPERTY(suitcase, portable) is. Restricting explications to this fixed list of relation shapes (rather than letting 
+    any relation name be invented per word) is what keeps word definitions themselves closed, the same way core/primitives.py keeps the atoms closed.
+    """
+    IS_A = "IS-A"
+    HAS_PART = "HAS-PART"
+    DOES = "DOES"
+    HAPPENS_TO = "HAPPENS-TO"
+    CAUSES = "CAUSES"
+    AT_PLACE = "AT-PLACE"
+    HAS_PROPERTY = "HAS-PROPERTY"
+    CAN = "CAN"
+    BEFORE = "BEFORE"
+    AFTER = "AFTER"
+    PART_OF = "PART-OF"
+    WANTS = "WANTS"
+    THINKS = "THINKS"
+    KNOWS = "KNOWS"
+    FEELS = "FEELS"
+
+@dataclass
+class Explication:
+    """
+    One word's meaning, expressed as a single relation from the closed FrameTemplate list plus whatever fills its slots. A slot filler is either a primitive name (a string from
+    core/primitives.py, e.g. "CAN"), or the name of another lexicon entry whose own explication supplies the rest of the meaning (e.g. "portable"'s explication might fill a HAS-PROPERTY slot
+    with the word "portable" itself, whose own explication is CAN + MOVE). Nesting bottoms out eventually at primitives: that bottoming-out is exactly what keeps the whole lexicon's meanings
+    traceable back to the closed vocabulary instead of definitions referring to each other forever.
+    """
+    frame: FrameTemplate
+    slots: Dict[str, str] = field(default_factory = dict)
+
 @dataclass
 class Primitive:
     """
-    One atomic building block of word meaning - a single entry from the closed vocabulary defined in core/primitives.py (e.g. MOVE, GOOD, BEFORE), paired with 
+    One atomic building block of word meaning: a single entry from the closed vocabulary defined in core/primitives.py (e.g. MOVE, GOOD, BEFORE), paired with 
     a loose category label for readability (e.g. "action", "property"). A word's full meaning is built out of a small collection of these, never out of a single one.
     """
     name: str
@@ -142,7 +175,7 @@ class ContextIndex:
 @dataclass
 class Entity:
     """
-    Something DEMES's world model can refer to - which, in English, is not always just one thing. "The suitcase" refers to a single, atomic entity, but "the students" 
+    Something DEMES's world model can refer to: which, in English, is not always just one thing. "The suitcase" refers to a single, atomic entity, but "the students" 
     refers to a group, and "the students" can be talked about either collectively (they gathered, as one group) or distributively (they each read a book, one action per member). 
     This is Godehard Link's lattice-based treatment of plurals: rather than inventing separate machinery for singular vs. plural nouns, every entity is either atomic 
     (is_sum is False, members is empty) or a sum of other entities (is_sum is True, members lists which ones), and collective vs. distributive meaning is worked out by checking 
@@ -204,7 +237,7 @@ class DerivationNode:
     in the same sentence ("Before he entered the room, John took off his coat" is fine; "He entered the room before John did", meaning the same John, is not))
     have real sentence structure to check against, instead of guessing from word order alone.
 
-    label is the node's grammatical category as a plain string (e.g. "S", "NP") - deliberately not tied to any one grammar implementation's category class, so 
+    label is the node's grammatical category as a plain string (e.g. "S", "NP"): deliberately not tied to any one grammar implementation's category class, so 
     this shape can be shared across files without those files needing to import each other's internals. children holds the sub-trees that were combined to build this node 
     (empty for a single word). token is the actual word this node represents, only set on leaf nodes. span is the range of word positions this node covers, used to 
     quickly check whether one node's words fall entirely inside another's.
