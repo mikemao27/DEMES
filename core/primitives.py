@@ -33,7 +33,6 @@ from typing import Dict, List, Tuple, FrozenSet
 # This table is the ONLY place in the entire codebase where a new primitive name should ever be added. If a word's meaning does not fit 
 # using what is already here, the word needs to be re-explained in terms of these primitives instead of growing the table: growing this table 
 # quietly reintroduces the exact problem ("MUSHROOM_OR_PORTABLE") this file exists to prevent.
-
 _PRIMITIVE_TABLE: Dict[str, Tuple[str, ...]] = {
     "substantives": ("I", "YOU", "SOMEONE", "SOMETHING", "PEOPLE", "BODY"),
     "relational_substantives": ("KIND", "PART"),

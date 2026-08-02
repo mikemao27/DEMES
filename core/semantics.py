@@ -27,7 +27,6 @@ from core.types import LogicalForm, LambdaExpression, SemanticType, StoredQuanti
 # Formal semantics needs somewhere to distinguish "a placeholder waiting to be filled in" from "an actual thing" from "one thing being applied to another": that's all 
 # these three classes are. They're deliberately minimal: enough to make beta-reduction a genuine, correct operation instead of a Python string trick, without inventing 
 # more term-language machinery than DEMES's sentences currently need.
-
 class Variable:
     """
     A placeholder inside a LambdaExpression's body, waiting to be substituted for.
