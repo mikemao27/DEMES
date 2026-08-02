@@ -19,9 +19,9 @@ repository-code: "https://github.com/mikemao27/Sproot"
 license: Apache-2.0
 version: "1.0.0"
 keywords: 
-  - "world model"
   - "natural language understanding"
   - "natural language processing"
-  - "scaled dot-product attention"
-  - "bidirectional attention"
-  - "masked attention"
+  - "computational-semantics"
+  - "neuro-symbolic AI"
+  - "combinatory categorial grammar"
+  - "logic programming"
