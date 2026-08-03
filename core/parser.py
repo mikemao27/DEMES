@@ -34,7 +34,7 @@ that consume this file's output.
 
 from typing import List, Dict, Optional, Tuple, Any
 
-from core.types import LogicalForm, DerivationNode, Gender, GrammaticalNumber
+from core.types import LogicalForm, DerivationNode, Gender, GrammaticalNumber, StoredQuantifier
 
 # Categories: the "jigsaw-puzzle piece shapes" words get tagged with.
 class CCGCategory:
@@ -436,19 +436,20 @@ class ChartParser:
     def _extract_logical_form(self, tokens: List[str], root: DerivationNode) -> LogicalForm:
         """
         Reads a LogicalForm off a completed derivation tree. This is a deliberately simple extraction (find the predicate, find the arguments, note negation/tense/quantification)
-        not full compositional semantics; real beta-reduction over the tree's structure is core/semantics.py's job, arriving next. What this step already gets right, thanks to
-        having a real tree instead of a flat token list: an attributive adjective (tagged N/N in the winning derivation) is never mistaken for the sentence's predicate, because its label
-        won't match the predicative category check below: "the heavy suitcase is portable" now correctly identifies "portable" alone as the predicate, not "heavy".
+        not full compositional semantics; real beta-reduction over the tree's structure is core/semantics.py's job. What this step gets right, thanks to having a real tree instead
+        of a flat token list: an attributive adjective (tagged N/N in the winning derivation) is never mistaken for the sentence's predicate ("the heavy suitcase is portable" correctly
+        identifies "portable" alone as the predicate, not "heavy"), and quantifiers are found by walking the tree rather than checking only whether the sentence starts with one: which
+        is what makes more than one quantifier per sentence ("every student read a book") representable at all, instead of only ever picking up the first.
         """
         leaves = collect_leaves(root)
         is_negated = any(leaf.token in NEGATION_WORDS for leaf in leaves)
         tense = self._detect_tense(leaves)
 
-        content_leaves = [leaf for leaf in leaves if leaf.token not in _FUNCTION_WORDS]
+        quantifier_store = self._collect_stored_quantifiers(root, leaves)
 
-        first_token = tokens[0]
-        if first_token in QUANTIFIERS:
-            return self._build_quantified_form(tokens, first_token, is_negated, tense)
+        # Quantifier words are already excluded here (they're in _FUNCTION_WORDS, the same closed set determiners belong to): the noun each one restricts is not, and remains a
+        # normal content leaf, exactly like an ordinary determiner's noun would.
+        content_leaves = [leaf for leaf in leaves if leaf.token not in _FUNCTION_WORDS]
 
         predicate_index = None
         for i in range(len(content_leaves) - 1, -1, -1):
@@ -464,13 +465,23 @@ class ChartParser:
         predicate_leaf = content_leaves[predicate_index]
         argument_leaves = content_leaves[:predicate_index] + content_leaves[predicate_index + 1:]
         arguments = [leaf.token for leaf in argument_leaves if leaf.token not in COMPARISON_MARKERS]
+        plural_arguments = [leaf.token for leaf in argument_leaves if self._is_plural_noun_leaf(leaf)]
 
         form = LogicalForm(
             predicate = predicate_leaf.token.upper(),
             arguments = arguments,
             is_negated = is_negated,
             tense = tense,
+            plural_arguments = plural_arguments,
         )
+
+        if quantifier_store:
+            form.quantifier_store = quantifier_store
+            if len(quantifier_store) == 1:
+                # The single-quantifier shape core/semantics.py's existing evaluator already knows how to check: see core/types.py's LogicalForm docstring for why both
+                # fields exist rather than just quantifier_store.
+                sole = quantifier_store[0]
+                form.quantifier_meta = {"operator": sole.operator, "variable": sole.bound_variable, "restrictor": sole.restrictor}
 
         predicate_lemma = self.lexicon.lemmatize(predicate_leaf.token) or predicate_leaf.token
         idiom_object = _IDIOM_OBJECT_TRIGGERS.get(predicate_lemma)
@@ -478,6 +489,39 @@ class ChartParser:
             form.predicate = f"IDIOM:{predicate_lemma}_{idiom_object}"
 
         return form
+
+    def _collect_stored_quantifiers(self, root: DerivationNode, leaves: List[DerivationNode]) -> List[StoredQuantifier]:
+        """
+        Finds every quantifier word in the tree and, for each, the noun it combined with to form an NP (its restrictor): by looking at the quantifier leaf's parent node (built via
+        forward application, NP/N + N -> NP) and taking whichever sibling isn't the quantifier itself. context_id stays "global" for now; giving each stored quantifier a context tied to
+        an actual opened Modal & Attitude context is what the 5a/6d intensional-scope coupling needs, and that depends on clausal complements existing at all (a later grammar step):
+        not something this step can meaningfully do yet.
+        """
+        stored: List[StoredQuantifier] = []
+        for leaf in leaves:
+            if leaf.token not in QUANTIFIERS:
+                continue
+            parent = find_parent(root, leaf)
+            if parent is None:
+                continue
+            restrictor_leaf = next((child for child in parent.children if child is not leaf and child.token), None)
+            if restrictor_leaf is None:
+                continue
+            stored.append(StoredQuantifier(
+                operator = QUANTIFIERS[leaf.token],
+                restrictor = restrictor_leaf.token.upper(),
+                bound_variable = "x",
+                context_id = "global",
+            ))
+        return stored
+
+    def _is_plural_noun_leaf(self, leaf: DerivationNode) -> bool:
+        if not leaf.token:
+            return False
+        entry = self.lexicon.get_word_definition(leaf.token)
+        if not entry or entry.get("category") != "noun":
+            return False
+        return self.lexicon.detect_inflection(leaf.token) == "plural_or_third_person"
 
     def _is_verb_leaf(self, leaf: DerivationNode) -> bool:
         return leaf.label in (repr(INTRANSITIVE_VERB), repr(TRANSITIVE_VERB), repr(DITRANSITIVE_VERB))
@@ -489,24 +533,3 @@ class ChartParser:
         if tokens_present & FUTURE_MARKERS:
             return "future"
         return "present"
-
-    def _build_quantified_form(self, tokens: List[str], quantifier_word: str, is_negated: bool, tense: str) -> LogicalForm:
-        """
-        Quantified noun phrases ("every suitcase is portable") are handled positionally rather than purely tree-derived, matching the shape Cooper Storage (core/semantics.py, not yet
-        built) will need to consume: head_noun is the restrictor, predicate_word is what's claimed about every member of it.
-        """
-        head_noun = tokens[1] if len(tokens) > 1 else "entity"
-        predicate_word = tokens[-1] if len(tokens) > 2 else "state"
-
-        form = LogicalForm(
-            predicate = predicate_word.upper(),
-            arguments = [head_noun],
-            is_negated = is_negated,
-            tense = tense,
-        )
-        form.quantifier_meta = {
-            "operator": QUANTIFIERS[quantifier_word],
-            "variable": "x",
-            "restrictor": head_noun.upper(),
-        }
-        return form

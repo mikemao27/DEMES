@@ -152,11 +152,13 @@ class WorldModel:
         self.episodic_facts.clear()
 
     # Link's lattice: plural entities, and collective vs. distributive checks.
-    def register_entity(self, entity_id: str, kind: str) -> Entity:
+    def register_entity(self, entity_id: str, kind: str, is_sum: bool = False) -> Entity:
         """
-        Registers a single atomic entity (e.g. one particular suitcase).
+        Registers a single entity: atomic by default (e.g. one particular suitcase). Passing is_sum = True registers it as an unenumerated plurality instead 
+        (e.g. a bare "the suitcases" mention, where grammatical number is known but individual members aren't): real individual-member enumeration (via join_entities) 
+        still requires those members to have been introduced some other way; this only records that the mention itself was plural.
         """
-        entity = Entity(id = entity_id, kind = kind)
+        entity = Entity(id = entity_id, kind = kind, is_sum = is_sum)
         self.entities[entity_id] = entity
         return entity
 

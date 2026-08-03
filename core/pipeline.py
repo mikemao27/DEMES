@@ -107,14 +107,18 @@ class DEMESPipeline:
     # Discourse referents and pronoun resolution.
     def _register_noun_arguments(self, logical_form) -> None:
         """
-        Registers any argument that is itself a lexicon noun as a fresh discourse referent, using the arguments 
-        exactly as the parser produced them: a bare pronoun token like "it" isn't a lexicon entry at all (see core/parser.py's PRONOUNS table), 
-        so this step naturally never mistakes a pronoun for a new noun mention.
+        Registers any argument that is itself a lexicon noun as a fresh discourse referent, using the arguments
+        exactly as the parser produced them: a bare pronoun token like "it" isn't a lexicon entry at all (see core/parser.py's PRONOUNS table),
+        so this step naturally never mistakes a pronoun for a new noun mention. An argument the parser flagged as grammatically plural
+        (logical_form.plural_arguments) is additionally registered as a plural entity (core/world_model.py's Link's-lattice support) rather
+        than an ordinary atomic one: see WorldModel.register_entity's own docstring for the honest limit on what that captures.
         """
         for argument in logical_form.arguments:
             entry = self.lexicon.get_word_definition(str(argument))
             if entry and entry.get("category") == "noun":
-                self.world_model.register_referent(str(argument), "noun", properties=[logical_form.predicate.lower()])
+                self.world_model.register_referent(str(argument), "noun", properties = [logical_form.predicate.lower()])
+                if str(argument) in logical_form.plural_arguments:
+                    self.world_model.register_entity(str(argument), kind = str(argument), is_sum = True)
 
     def _resolve_pronoun_arguments(self, logical_form, derivation_tree) -> None:
         """

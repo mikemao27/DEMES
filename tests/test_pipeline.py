@@ -82,6 +82,30 @@ class TestNounRegistrationAndPronounResolution(TestPipelineBase):
         result = self.pipeline.process_utterance("It is portable.")
         self.assertEqual(result["logical_form"].arguments, ["it"])
 
+    def test_plural_noun_mention_is_registered_as_a_sum_entity(self):
+        self.pipeline.process_utterance("The suitcases is portable.")
+        entity = self.pipeline.world_model.entities.get("suitcases")
+        self.assertIsNotNone(entity)
+        self.assertTrue(entity.is_sum)
+
+    def test_singular_noun_mention_is_not_registered_as_an_entity(self):
+        self.pipeline.process_utterance("The suitcase is portable.")
+        self.assertNotIn("suitcase", self.pipeline.world_model.entities)
+
+class TestMultiQuantifierIntegration(TestPipelineBase):
+    def setUp(self):
+        super().setUp()
+        self.pipeline.lexicon.lexicon["student"] = {"category": "noun", "semantic_type": "e", "primitives": [{"name": "PEOPLE", "category": "entity"}], "valency": "none"}
+        self.pipeline.lexicon.lexicon["book"] = {"category": "noun", "semantic_type": "e", "primitives": [{"name": "SOMETHING", "category": "entity"}], "valency": "none"}
+        self.pipeline.lexicon.lexicon["read"] = {"category": "verb", "semantic_type": "<e,<e,t>>", "primitives": [{"name": "SEE", "category": "action"}], "valency": "transitive"}
+
+    def test_two_quantifiers_reach_the_pipeline_output_intact(self):
+        result = self.pipeline.process_utterance("Every student read a book.")
+        form = result["logical_form"]
+        self.assertEqual(form.predicate, "READ")
+        self.assertEqual(len(form.quantifier_store), 2)
+        self.assertIsNone(form.quantifier_meta)
+
 class TestWordSenseDisambiguationIntegration(TestPipelineBase):
     def test_bank_resolves_to_river_sense_near_a_geographical_sibling(self):
         result = self.pipeline.process_utterance("The bank is near the river.")

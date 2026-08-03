@@ -49,6 +49,12 @@ class TestLinksLattice(unittest.TestCase):
         entity = self.world_model.entities["student_a"]
         self.assertTrue(entity.is_atomic())
 
+    def test_register_entity_can_be_registered_as_an_unenumerated_plural(self):
+        self.world_model.register_entity("suitcases", "SUITCASE", is_sum = True)
+        entity = self.world_model.entities["suitcases"]
+        self.assertTrue(entity.is_sum)
+        self.assertEqual(entity.members, [])
+
     def test_join_produces_a_sum(self):
         sum_entity = self.world_model.join_entities(["student_a", "student_b"])
         self.assertTrue(sum_entity.is_sum)
@@ -135,7 +141,7 @@ class TestPresuppositionTracking(unittest.TestCase):
         self.assertIsNone(self.world_model.check_presupposition("walk", "john"))
 
     def test_negation_does_not_touch_the_presupposition_store(self):
-        # "John didn't stop smoking" still presupposes he used to - is_negated never enters here.
+        # "John didn't stop smoking" still presupposes he used to: is_negated never enters here.
         self.world_model.assert_presupposition("stop", "john", holds = True)
 
         # No is_negated parameter exists on these methods at all; the presence of that fact, asserted once, is unaffected 

@@ -184,7 +184,6 @@ class ThematicRole(Enum):
     LOCATION = "location"
     TIME = "time"
 
-
 @dataclass
 class Entity:
     """
@@ -200,7 +199,7 @@ class Entity:
     id: str
     kind: str
     is_sum: bool = False
-    members: List[str] = field(default_factory=list)
+    members: List[str] = field(default_factory = list)
 
     def is_atomic(self) -> bool:
         return not self.is_sum
@@ -224,7 +223,7 @@ class EventRecord:
     progressive, but only one of them can be coerced by "started".
     """
     predicate: str
-    roles: Dict[str, str] = field(default_factory=dict)
+    roles: Dict[str, str] = field(default_factor = dict)
     speech_time: int = 0
     reference_time: int = 0
     event_time: int = 0
@@ -299,7 +298,7 @@ class DiscourseReferent:
     id: str
     name: str
     type: str
-    properties: List[str] = field(default_factory=list)
+    properties: List[str] = field(default_factory = list)
     gender: Optional[Gender] = None
     number: Optional[GrammaticalNumber] = None
     animate: Optional[bool] = None
@@ -311,13 +310,19 @@ class LogicalForm:
     who-did-what-to-what; is_negated and tense capture the two grammatical operators that flip or shift that basic meaning without changing what the predicate and arguments themselves are.
     quantifier_meta, when present, records that this sentence involves a quantified noun phrase ("every", "some", "no") and how it should be evaluated: it is an explicit, always-present
     field (rather than something only sometimes attached after the fact) specifically so every other file can check it the same simple way, `if logical_form.quantifier_meta:`, without first
-    needing to check whether the field exists at all.
+    needing to check whether the field exists at all. It is populated only when the sentence has exactly one quantifier: the shape core/semantics.py's existing single-quantifier evaluator
+    already knows how to check. quantifier_store holds every quantifier the parser actually found (one entry even in the single-quantifier case, more when a sentence like "every student
+    read a book" has more than one): this is the field Cooper Storage's scope-reading enumeration (core/semantics.py's enumerate_scope_readings) is meant to consume. plural_arguments
+    names which entries in `arguments` were grammatically plural nouns, for core/pipeline.py to register as summed entities (Link's lattice, core/world_model.py's join_entities) instead
+    of ordinary atomic ones.
     """
     predicate: str
-    arguments: List[Union[str, "LogicalForm", Primitive]] = field(default_factory=list)
+    arguments: List[Union[str, "LogicalForm", Primitive]] = field(default_factory = list)
     is_negated: bool = False
     tense: str = "present"
     quantifier_meta: Optional[Dict[str, Any]] = None
+    quantifier_store: List[StoredQuantifier] = field(default_factory = list)
+    plural_arguments: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -329,4 +334,5 @@ class LogicalForm:
             "is_negated": self.is_negated,
             "tense": self.tense,
             "quantifier_meta": self.quantifier_meta,
+            "plural_arguments": self.plural_arguments,
         }

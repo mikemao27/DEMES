@@ -210,6 +210,9 @@ class TestChartParserEndToEnd(unittest.TestCase):
         self.lexicon.lexicon["see"] = {"category": "verb", "semantic_type": "<e,<e,t>>", "primitives": [{"name": "SEE", "category": "action"}], "valency": "transitive"}
         self.lexicon.lexicon["heavy"] = {"category": "adjective", "semantic_type": "<e,t>", "primitives": [{"name": "BIG", "category": "property"}], "valency": "none"}
         self.lexicon.lexicon["great"] = {"category": "adjective", "semantic_type": "<e,t>", "primitives": [{"name": "GOOD", "category": "property"}], "valency": "none"}
+        self.lexicon.lexicon["student"] = {"category": "noun", "semantic_type": "e", "primitives": [{"name": "PEOPLE", "category": "entity"}], "valency": "none"}
+        self.lexicon.lexicon["book"] = {"category": "noun", "semantic_type": "e", "primitives": [{"name": "SOMETHING", "category": "entity"}], "valency": "none"}
+        self.lexicon.lexicon["read"] = {"category": "verb", "semantic_type": "<e,<e,t>>", "primitives": [{"name": "SEE", "category": "action"}], "valency": "transitive"}
 
         self.parser = ChartParser(self.lexicon)
 
@@ -251,6 +254,29 @@ class TestChartParserEndToEnd(unittest.TestCase):
         self.assertEqual(form.quantifier_meta["operator"], "FORALL")
         self.assertEqual(form.quantifier_meta["restrictor"], "SUITCASE")
 
+    def test_single_quantifier_also_populates_the_store(self):
+        form = self.parser.parse("Every suitcase is portable.")
+        self.assertEqual(len(form.quantifier_store), 1)
+        self.assertEqual(form.quantifier_store[0].operator, "FORALL")
+        self.assertEqual(form.quantifier_store[0].restrictor, "SUITCASE")
+
+    def test_two_quantifiers_are_both_captured_with_correct_restrictors(self):
+        # The exact ambiguity Cooper storage exists for: "every student" and "a book" each need their own restrictor found correctly, regardless of subject/object position.
+        form = self.parser.parse("Every student read a book.")
+        self.assertEqual(form.predicate, "READ")
+        self.assertEqual(set(form.arguments), {"student", "book"})
+        self.assertIsNone(form.quantifier_meta)  # Not the single-quantifier shape.
+        operators_by_restrictor = {q.restrictor: q.operator for q in form.quantifier_store}
+        self.assertEqual(operators_by_restrictor, {"STUDENT": "FORALL", "BOOK": "EXISTS"})
+
+    def test_plural_noun_is_tagged(self):
+        form = self.parser.parse("The suitcases is portable.")
+        self.assertIn("suitcases", form.plural_arguments)
+
+    def test_singular_noun_is_not_tagged_plural(self):
+        form = self.parser.parse("The suitcase is portable.")
+        self.assertEqual(form.plural_arguments, [])
+
     def test_comparative_with_explicit_standard(self):
         form = self.parser.parse("The suitcase is greater than the trophy.")
         self.assertEqual(form.predicate, "GREATER")
@@ -282,8 +308,7 @@ class TestChartParserEndToEnd(unittest.TestCase):
         self.assertIsNotNone(form)
 
     def test_pronoun_parses_as_an_unresolved_argument(self):
-        # Resolving what "it" refers to is core/discourse.py's job - the parser's job stops at
-        # producing a syntactically valid sentence with the pronoun as a literal argument.
+        # Resolving what "it" refers to is core/discourse.py's job: the parser's job stops at producing a syntactically valid sentence with the pronoun as a literal argument.
         form = self.parser.parse("It is portable.")
         self.assertEqual(form.predicate, "PORTABLE")
         self.assertEqual(form.arguments, ["it"])
