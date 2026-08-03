@@ -474,5 +474,72 @@ class TestCoordination(unittest.TestCase):
         self.assertTrue(form[0].is_negated)
         self.assertFalse(form[1].is_negated)
 
+class TestPassiveVoice(unittest.TestCase):
+    """
+    Phase 2.5: a transitive/ditransitive verb's participle form ("kicked", "given", "taken") can also be the demoted verb of a passive sentence, taking
+    no object: workable with the existing combinators (no new mechanism), just a fallback INTRANSITIVE_VERB candidate plus a "by"-agent PP category
+    that reuses the same VP-attachment shape a trailing adjunct clause does.
+    """
+    def setUp(self):
+        self.test_dir = "tests/temp_data_parser_passive"
+        os.makedirs(self.test_dir, exist_ok = True)
+        self.store_path = os.path.join(self.test_dir, "lexicon.json")
+        self.lexicon = LexiconManager(store_path = self.store_path)
+
+        self.lexicon.lexicon["john"] = {"category": "proper_noun", "semantic_type": "e", "primitives": [], "valency": "none"}
+        self.lexicon.lexicon["mary"] = {"category": "proper_noun", "semantic_type": "e", "primitives": [], "valency": "none"}
+        self.lexicon.lexicon["suitcase"] = {"category": "noun", "semantic_type": "e", "primitives": [{"name": "SOMETHING", "category": "entity"}], "valency": "none"}
+        self.lexicon.lexicon["ball"] = {"category": "noun", "semantic_type": "e", "primitives": [{"name": "SOMETHING", "category": "entity"}], "valency": "none"}
+        self.lexicon.lexicon["room"] = {"category": "noun", "semantic_type": "e", "primitives": [{"name": "SOMETHING", "category": "entity"}], "valency": "none"}
+        self.lexicon.lexicon["kick"] = {"category": "verb", "semantic_type": "<e,<e,t>>", "primitives": [{"name": "DO", "category": "action"}], "valency": "transitive"}
+        self.lexicon.lexicon["give"] = {"category": "verb", "semantic_type": "<e,<e,<e,t>>>", "primitives": [{"name": "DO", "category": "action"}], "valency": "ditransitive"}
+        self.lexicon.lexicon["take"] = {"category": "verb", "semantic_type": "<e,<e,t>>", "primitives": [{"name": "DO", "category": "action"}], "valency": "transitive"}
+        self.lexicon.lexicon["enter"] = {"category": "verb", "semantic_type": "<e,<e,t>>", "primitives": [{"name": "MOVE", "category": "action"}], "valency": "transitive"}
+        self.lexicon.lexicon["walk"] = {"category": "verb", "semantic_type": "<e,t>", "primitives": [{"name": "MOVE", "category": "action"}], "valency": "intransitive"}
+
+        self.parser = ChartParser(self.lexicon)
+
+    def tearDown(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_active_transitive_sentence_is_not_flagged_passive(self):
+        form = self.parser.parse("John kicked the ball.")
+        self.assertFalse(form.is_passive)
+        self.assertEqual(form.arguments, ["john", "ball"])
+
+    def test_passive_without_agent(self):
+        form = self.parser.parse("The suitcase was kicked.")
+        self.assertTrue(form.is_passive)
+        self.assertEqual(form.predicate, "KICKED")
+        self.assertEqual(form.arguments, ["suitcase"])
+
+    def test_passive_with_by_agent(self):
+        form = self.parser.parse("The suitcase was kicked by John.")
+        self.assertTrue(form.is_passive)
+        self.assertEqual(form.arguments, ["suitcase", "john"])
+
+    def test_ditransitive_passive(self):
+        form = self.parser.parse("The ball was given by John.")
+        self.assertTrue(form.is_passive)
+        self.assertEqual(form.predicate, "GIVEN")
+        self.assertEqual(form.arguments, ["ball", "john"])
+
+    def test_irregular_verb_passive_via_past_participle(self):
+        form = self.parser.parse("The suitcase was taken by John.")
+        self.assertTrue(form.is_passive)
+        self.assertEqual(form.arguments, ["suitcase", "john"])
+
+    def test_ordinary_intransitive_sentence_is_never_flagged_passive(self):
+        form = self.parser.parse("John walked.")
+        self.assertFalse(form.is_passive)
+
+    def test_genuine_trailing_adjunct_clause_still_excluded_alongside_passive(self):
+        # The by-agent phrase and a genuine trailing adjunct clause share the same VP-attachment category shape (((S\NP)\(S\NP))): confirms
+        # _matrix_clause_leaves's content-based distinction (subordinator present vs. not) keeps telling them apart correctly.
+        form = self.parser.parse("The suitcase was taken before John entered the room.")
+        self.assertTrue(form.is_passive)
+        self.assertEqual(form.arguments, ["suitcase"])
+
 if __name__ == "__main__":
     unittest.main()

@@ -68,6 +68,11 @@ _IRREGULAR_LEMMAS: Dict[str, str] = {
     "worse": "bad", "worst": "bad",
 }
 
+# Which irregular surface forms above are specifically PAST PARTICIPLES (the passive/perfect form: "was TAKEN", "has GONE"), as opposed to simple past ("took", "went") or any other irregular form. 
+# English regular verbs never distinguish the two ("kicked" serves both simple past and past participle), but a closed handful of common irregular verbs do: detect_inflection() checks this set 
+# first so passive-voice detection (core/parser.py) can tell a genuine past-participle form apart from simple past, exactly the wrinkle the grammar-coverage plan flagged going into passive voice.
+_IRREGULAR_PAST_PARTICIPLES = {"gone", "been", "done", "seen", "taken", "given", "known", "eaten"}
+
 # Regular suffixes tried, in order, against an unrecognized word. Each is paired with a plain-language label describing what that ending signals grammatically, used by detect_inflection().
 _REGULAR_SUFFIX_RULES: Tuple[Tuple[str, str], ...] = (
     ("ies", "plural_or_third_person"), # cities -> city.
@@ -242,9 +247,11 @@ class LexiconManager:
 
     def detect_inflection(self, word: str) -> Optional[str]:
         """
-        Reports what grammatical ending, if any, was recognized on a word ("past", "progressive", "plural_or_third_person", "comparative", "superlative", "irregular"), without deciding
-        what that means for a sentence's overall tense: that interpretation is a later layer's job (the world model's event records). Returns None if the word is already a base form, or
-        if nothing about it was recognized at all.
+        Reports what grammatical ending, if any, was recognized on a word ("past", "progressive", "plural_or_third_person", "comparative", "superlative", "irregular",
+        "irregular_past_participle"), without deciding what that means for a sentence's overall tense: that interpretation is a later layer's job (the world model's event records).
+        "irregular_past_participle" is reported instead of the generic "irregular" specifically for the closed set of irregular forms that are unambiguously a past participle
+        (_IRREGULAR_PAST_PARTICIPLES above): regular verbs can never report it, since "kicked" genuinely doesn't distinguish past from past-participle on its own. Returns None if the
+        word is already a base form, or if nothing about it was recognized at all.
         """
         clean_word = word.lower()
         if clean_word in self.lexicon or clean_word in self.provisional_lexicon:
@@ -252,6 +259,8 @@ class LexiconManager:
 
         for candidate, label in _generate_lemma_candidates(clean_word):
             if candidate in self.lexicon or candidate in self.provisional_lexicon:
+                if label == "irregular" and clean_word in _IRREGULAR_PAST_PARTICIPLES:
+                    return "irregular_past_participle"
                 return label
 
         return None

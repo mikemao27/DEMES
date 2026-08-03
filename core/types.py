@@ -314,7 +314,9 @@ class LogicalForm:
     already knows how to check. quantifier_store holds every quantifier the parser actually found (one entry even in the single-quantifier case, more when a sentence like "every student
     read a book" has more than one): this is the field Cooper Storage's scope-reading enumeration (core/semantics.py's enumerate_scope_readings) is meant to consume. plural_arguments
     names which entries in `arguments` were grammatically plural nouns, for core/pipeline.py to register as summed entities (Link's lattice, core/world_model.py's join_entities) instead
-    of ordinary atomic ones.
+    of ordinary atomic ones. is_passive records that the sentence was a passive construction ("The suitcase was kicked [by John]"), meaning `arguments[0]` is semantically the PATIENT
+    of `predicate`, not the AGENT the same position would mean for an ordinary active sentence: relevant to core/world_model.py's thematic-role recording once that's populated from
+    real parses (not yet true today: record_event is still always called with an empty roles dict), but recorded here now so that later wiring has something real to read.
     """
     predicate: str
     arguments: List[Union[str, "LogicalForm", Primitive]] = field(default_factory = list)
@@ -323,6 +325,7 @@ class LogicalForm:
     quantifier_meta: Optional[Dict[str, Any]] = None
     quantifier_store: List[StoredQuantifier] = field(default_factory = list)
     plural_arguments: List[str] = field(default_factory=list)
+    is_passive: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -335,4 +338,5 @@ class LogicalForm:
             "tense": self.tense,
             "quantifier_meta": self.quantifier_meta,
             "plural_arguments": self.plural_arguments,
+            "is_passive": self.is_passive,
         }

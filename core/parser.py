@@ -23,10 +23,11 @@ sentence structure to check against.
 
 WHAT THIS FILE DOES NOT YET DO, ON PURPOSE: This is real CCG composition for the sentence shapes DEMES has been built and tested against so far: simple declaratives,
 quantified noun phrases (multiple per sentence), plural nouns, negation, tense marking, transitive/intransitive verbs, attributive/predicative/comparative adjectives,
-adjunct/subordinate clauses, clausal complements ("John thinks that Mary is home"), and whole-sentence "and"/"or" coordination (a dedicated, closed ternary chart rule,
-deliberately narrower than general CCG coordination: see COORDINATORS' own docstring). It does not yet handle passive voice or wh-questions: those need more category
-assignments and, in a couple of cases, combinators (type-raising) that are implemented and tested here but not yet wired into the chart's automatic search, to keep the
-search space from exploding before there's a real need to. Extending coverage later means adding more category data, not rewriting this engine.
+adjunct/subordinate clauses, clausal complements ("John thinks that Mary is home"), whole-sentence "and"/"or" coordination (a dedicated, closed ternary chart rule,
+deliberately narrower than general CCG coordination: see COORDINATORS' own docstring), and passive voice ("The suitcase was kicked [by John]", is_passive on the
+resulting LogicalForm flagging that the surface subject is the PATIENT, not the AGENT). It does not yet handle wh-questions: those need more category assignments
+and a combinator (type-raising) that's implemented and tested here but not yet wired into the chart's automatic search, to keep the search space from exploding
+before there's a real need to. Extending coverage later means adding more category data, not rewriting this engine.
 
 This file also does not resolve pronouns or decide what a sentence's truth value is: producing the correct sentence STRUCTURE is this file's job; resolving 
 what "it" refers to (core/discourse.py) and evaluating whether the sentence is true (core/semantics.py, core/world_model.py) are separate, later jobs 
@@ -106,6 +107,12 @@ CLAUSAL_VERB = CCGCategory(INTRANSITIVE_VERB, S, "/") # (S\NP)/S: a mental-predi
 COMPLEMENTIZER = CCGCategory(S, S, "/") # S/S: "that", consuming its clause directly to produce a complete S in one step: unlike a subordinator, which needs an extra step (see ADJUNCT_TAKING) before it can attach to a matrix clause.
 ADJUNCT_TAKING = CCGCategory(SENTENCE_MODIFIER, S, "/") # (S/S)/S: a subordinator like "before" in fronted position, consuming its own clause first.
 TRAILING_ADJUNCT_TAKING = CCGCategory(TRAILING_VP_MODIFIER, S, "/") # ((S\NP)\(S\NP))/S: the same subordinator in trailing position.
+
+# "By John" in a passive sentence ("The suitcase was kicked by John") reuses the same VP-level attachment shape a trailing adjunct does: ((S\NP)\(S\NP))/NP,
+# taking the agent NP to its right and, once combined, backward-applying to an already-complete passive VP without changing its category, since that is
+# simply what "a thing that attaches after a VP and gives back a VP" means categorially, the same shape any right-adjoining VP modifier must have. Because
+# of that reuse, _matrix_clause_leaves's adjunct-exclusion check (below) can't tell the two apart by category label alone, and is refined accordingly.
+BY_AGENT = CCGCategory(TRAILING_VP_MODIFIER, NP, "/") # ((S\NP)\(S\NP))/NP.
 
 # Combinators: the small, fixed set of rules for combining two adjacent categories.
 def try_forward_application(left: CCGCategory, right: CCGCategory) -> Optional[CCGCategory]:
@@ -217,9 +224,16 @@ COMPLEMENTIZER_WORDS = {"that"}
 # narrower mechanism (same concrete category on both sides of the coordinator) covers "John left and Mary left" / "the suitcase or the trophy" without it.
 COORDINATORS: Dict[str, str] = {"and": "AND", "or": "OR"}
 
+# The preposition introducing a passive sentence's agent phrase ("The suitcase was kicked BY John"). A closed, one-word set: the same discipline as every
+# other function-word table here, not an attempt to cover prepositions generally.
+PASSIVE_AGENT_MARKERS = {"by"}
+
 _DETERMINER_LIKE = set(QUANTIFIERS) | DETERMINERS
 _PREDICATE_MODIFIER_WORDS = COPULA_PRESENT | COPULA_PAST | NEGATION_WORDS | FUTURE_MARKERS | PAST_AUX
-_FUNCTION_WORDS = _DETERMINER_LIKE | _PREDICATE_MODIFIER_WORDS | COMPARISON_MARKERS | FOCUS_PARTICLES | SUBORDINATORS | COMPLEMENTIZER_WORDS | set(COORDINATORS)
+_FUNCTION_WORDS = (
+    _DETERMINER_LIKE | _PREDICATE_MODIFIER_WORDS | COMPARISON_MARKERS | FOCUS_PARTICLES | SUBORDINATORS
+    | COMPLEMENTIZER_WORDS | set(COORDINATORS) | PASSIVE_AGENT_MARKERS
+)
 
 # Pronouns are closed-class function words syntactically (the same status as determiners or negation) so their category and agreement features come 
 # from this fixed table, never from a lexicon.json entry. (An earlier design routed them through the ordinary lexicon, which required giving them a 
@@ -293,13 +307,28 @@ def supertag_content_word(word: str, lexicon_entry: Dict, inflection: Optional[s
     if category in ("proper_noun", "pronoun"):
         return [NP]
     if category == "verb":
+        # A transitive/ditransitive verb used in its PARTICIPLE form ("kicked", "taken") can also be the demoted verb of a passive sentence ("was kicked
+        # [by John]"), which takes no object at all: INTRANSITIVE_VERB (S\NP) is offered as a second, lower-ranked candidate whenever the inflection is
+        # consistent with participle use. This is genuinely ambiguous for a regular verb (inflection "past" doesn't distinguish "kicked the ball" from
+        # "was kicked": see core/lexicon.py's own docstring on this), so the chart decides which reading actually succeeds, the same underspecified-until-
+        # composition pattern predicative-vs-attributive adjectives already use; "irregular_past_participle" is unambiguous and only ever offers this reading.
         if valency == "transitive":
-            return [TRANSITIVE_VERB]
+            candidates = [TRANSITIVE_VERB]
+            if inflection in ("past", "irregular_past_participle"):
+                candidates.append(INTRANSITIVE_VERB)
+
+            return candidates
+        
         if valency == "ditransitive":
-            return [DITRANSITIVE_VERB]
+            candidates = [DITRANSITIVE_VERB]
+            if inflection in ("past", "irregular_past_participle"):
+                candidates.append(INTRANSITIVE_VERB)
+
+            return candidates
+        
         if valency == "clausal":
             return [CLAUSAL_VERB]
-        
+
         return [INTRANSITIVE_VERB]
     
     if category == "adjective":
@@ -336,6 +365,8 @@ def supertag_function_word(word: str) -> List[CCGCategory]:
         # combinator (see its own definition above), so this candidate category never actually gets used by the standard application/composition search;
         # the coordinator is consumed entirely by _run_chart's dedicated ternary coordination pass instead.
         return [COORD_ATOM]
+    if word in PASSIVE_AGENT_MARKERS:
+        return [BY_AGENT]
 
     return []
 
@@ -607,6 +638,7 @@ class ChartParser:
             is_negated = is_negated,
             tense = tense,
             plural_arguments = plural_arguments,
+            is_passive = self._is_passive_use(predicate_leaf),
         )
 
         if quantifier_store:
@@ -675,16 +707,30 @@ class ChartParser:
         every leaf under it, rather than only checking specific fixed tree positions. That generality matters: it means adjunct exclusion keeps working correctly regardless of
         exactly where composition or a particular combinator sequence ends up attaching the adjunct, rather than only for one specific expected tree shape. The adjunct clause's own
         content is still part of the FULL tree parse_with_derivation returns (needed whole for structural checks like cataphora's c-command test): only extraction excludes it.
+
+        A TRAILING_VP_MODIFIER-labeled node is NOT automatically a genuine adjunct clause any more, though: a passive sentence's "by John" agent phrase (BY_AGENT, see its own definition above) 
+        reuses this exact same VP-attachment shape, since that shape is just what "attaches after a VP, gives back a VP" categorially requires: there's no way to give it a different category 
+        and still have it combine correctly. The two are told apart by content, not label: a genuine adjunct clause's subtree contains one of SUBORDINATORS; a by-agent phrase never does 
+        (it's just "by" + an NP). Only the former is excluded here: the agent phrase's own NP is meant to survive as an ordinary argument (core/pipeline.py's _open_modal_attitude_context-style callers 
+        aside, this is what lets "The suitcase was kicked by John" put "john" into the sentence's arguments at all).
         """
-        adjunct_labels = (repr(SENTENCE_MODIFIER), repr(TRAILING_VP_MODIFIER))
         excluded_leaf_ids = set()
 
         def _mark_excluded(node: DerivationNode) -> None:
-            if node.label in adjunct_labels:
+            if node.label == repr(SENTENCE_MODIFIER):
                 for leaf in collect_leaves(node):
                     excluded_leaf_ids.add(id(leaf))
-                return # The whole adjunct phrase is excluded: no need to look inside it further.
-            
+                return # The whole fronted adjunct phrase is excluded: no need to look inside it further.
+
+            if node.label == repr(TRAILING_VP_MODIFIER):
+                subtree_leaves = collect_leaves(node)
+                if any(leaf.token in SUBORDINATORS for leaf in subtree_leaves):
+                    for leaf in subtree_leaves:
+                        excluded_leaf_ids.add(id(leaf))
+                    return # A genuine trailing adjunct clause: excluded, same as the fronted case.
+                
+                # Not a genuine adjunct (e.g. a by-agent phrase sharing the same VP-attachment shape): fall through and keep walking normally.
+
             for child in node.children:
                 _mark_excluded(child)
 
@@ -703,17 +749,21 @@ class ChartParser:
             if leaf.token not in QUANTIFIERS:
                 continue
             parent = find_parent(root, leaf)
+
             if parent is None:
                 continue
             restrictor_leaf = next((child for child in parent.children if child is not leaf and child.token), None)
+
             if restrictor_leaf is None:
                 continue
+            
             stored.append(StoredQuantifier(
                 operator = QUANTIFIERS[leaf.token],
                 restrictor = restrictor_leaf.token.upper(),
                 bound_variable = "x",
                 context_id = "global",
             ))
+
         return stored
 
     def _is_plural_noun_leaf(self, leaf: DerivationNode) -> bool:
@@ -722,10 +772,25 @@ class ChartParser:
         entry = self.lexicon.get_word_definition(leaf.token)
         if not entry or entry.get("category") != "noun":
             return False
+        
         return self.lexicon.detect_inflection(leaf.token) == "plural_or_third_person"
 
     def _is_verb_leaf(self, leaf: DerivationNode) -> bool:
         return leaf.label in (repr(INTRANSITIVE_VERB), repr(TRANSITIVE_VERB), repr(DITRANSITIVE_VERB), repr(CLAUSAL_VERB))
+
+    def _is_passive_use(self, predicate_leaf: DerivationNode) -> bool:
+        """
+        True if `predicate_leaf` is an inherently transitive/ditransitive verb that combined in the winning derivation using the demoted, object-less
+        INTRANSITIVE_VERB (S\\NP) shape rather than its own ordinary TRANSITIVE_VERB/DITRANSITIVE_VERB category: exactly the passive-voice reading (see
+        supertag_content_word's own docstring on why that shape is offered as a fallback candidate at all). This is a purely post-hoc check against the
+        WORD's own lexicon valency, not a separately-named category: PASSIVE_VERB would be structurally identical to INTRANSITIVE_VERB (same repr, "(S\\NP)")
+        and so couldn't be told apart from it by label anyway, the same reason PREDICATIVE_ADJECTIVE and INTRANSITIVE_VERB already share one label today.
+        """
+        entry = self.lexicon.get_word_definition(predicate_leaf.token)
+        if not entry or entry.get("category") != "verb":
+            return False
+        
+        return entry.get("valency") in ("transitive", "ditransitive") and predicate_leaf.label == repr(INTRANSITIVE_VERB)
 
     def _detect_tense(self, leaves: List[DerivationNode]) -> str:
         tokens_present = {leaf.token for leaf in leaves}
@@ -733,4 +798,5 @@ class ChartParser:
             return "past"
         if tokens_present & FUTURE_MARKERS:
             return "future"
+        
         return "present"

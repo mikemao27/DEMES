@@ -134,6 +134,16 @@ class TestLexiconLookupWithInflection(TestLexiconManagerBase):
     def test_detect_inflection_base_form_is_none(self):
         self.assertIsNone(self.manager.detect_inflection("walk"))
 
+    def test_detect_inflection_irregular_past_participle_is_distinguished(self):
+        # "taken" is unambiguously a past participle (unlike the generic "irregular" label most irregular forms get): the distinction Phase 2.5's
+        # passive-voice detection in core/parser.py needs, since a regular verb like "kicked" genuinely can't make this distinction on its own.
+        self.manager.lexicon["take"] = {"category": "verb", "semantic_type": "<e,<e,t>>", "primitives": [], "valency": "transitive"}
+        self.assertEqual(self.manager.detect_inflection("taken"), "irregular_past_participle")
+
+    def test_detect_inflection_irregular_simple_past_stays_generic(self):
+        self.manager.lexicon["take"] = {"category": "verb", "semantic_type": "<e,<e,t>>", "primitives": [], "valency": "transitive"}
+        self.assertEqual(self.manager.detect_inflection("took"), "irregular")
+
 class TestWordSenseDisambiguation(TestLexiconManagerBase):
     def setUp(self):
         super().setUp()
