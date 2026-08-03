@@ -541,5 +541,58 @@ class TestPassiveVoice(unittest.TestCase):
         self.assertTrue(form.is_passive)
         self.assertEqual(form.arguments, ["suitcase"])
 
+class TestWhQuestions(unittest.TestCase):
+    """
+    Phase 2.6: deliberately narrow, non-movement wh-question patterns only. A subject question ("Who walked?") needs zero new machinery at all: the
+    wh-word simply occupies subject position, the same NP category an ordinary pronoun already gets. An inverted copular question ("What is the
+    suitcase?") needs one small addition: the copula offered as a second, ordinary transitive-verb-shaped candidate, so it becomes the sentence's own
+    predicate (an identity relation) instead of being absorbed into an adjective's category the way it usually is. Neither needs real wh-movement
+    (a gap threaded through arbitrary embedded structure), which is explicitly out of scope for this sub-step.
+    """
+    def setUp(self):
+        self.test_dir = "tests/temp_data_parser_wh"
+        os.makedirs(self.test_dir, exist_ok = True)
+        self.store_path = os.path.join(self.test_dir, "lexicon.json")
+        self.lexicon = LexiconManager(store_path = self.store_path)
+
+        self.lexicon.lexicon["john"] = {"category": "proper_noun", "semantic_type": "e", "primitives": [], "valency": "none"}
+        self.lexicon.lexicon["suitcase"] = {"category": "noun", "semantic_type": "e", "primitives": [{"name": "SOMETHING", "category": "entity"}], "valency": "none"}
+        self.lexicon.lexicon["walk"] = {"category": "verb", "semantic_type": "<e,t>", "primitives": [{"name": "MOVE", "category": "action"}], "valency": "intransitive"}
+
+        self.parser = ChartParser(self.lexicon)
+
+    def tearDown(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_subject_wh_question_parses(self):
+        form = self.parser.parse("Who walked?")
+        self.assertEqual(form.predicate, "WALKED")
+        self.assertEqual(form.arguments, ["who"])
+
+    def test_inverted_copular_question_with_what(self):
+        form = self.parser.parse("What is the suitcase?")
+        self.assertEqual(form.predicate, "IS")
+        self.assertEqual(form.arguments, ["what", "suitcase"])
+
+    def test_inverted_copular_question_with_who(self):
+        form = self.parser.parse("Who is John?")
+        self.assertEqual(form.predicate, "IS")
+        self.assertEqual(form.arguments, ["who", "john"])
+
+    def test_ordinary_adjectival_declarative_is_unaffected(self):
+        # The copula's new TRANSITIVE_VERB candidate must stay inert whenever nothing NP-shaped actually follows it.
+        self.lexicon.lexicon["portable"] = {"category": "adjective", "semantic_type": "<e,t>", "primitives": [{"name": "CAN", "category": "logical"}], "valency": "none"}
+        form = self.parser.parse("The suitcase is portable.")
+        self.assertEqual(form.predicate, "PORTABLE")
+        self.assertEqual(form.arguments, ["suitcase"])
+
+    def test_yes_no_inversion_question_stays_out_of_scope(self):
+        # Subject-aux inversion for a yes/no question ("Is the suitcase portable?") is a different construction from a wh-question and is correctly
+        # NOT supported by this sub-step: it should still fail to parse rather than succeed with a wrong reading.
+        self.lexicon.lexicon["portable"] = {"category": "adjective", "semantic_type": "<e,t>", "primitives": [{"name": "CAN", "category": "logical"}], "valency": "none"}
+        form = self.parser.parse("Is the suitcase portable?")
+        self.assertIsNone(form)
+
 if __name__ == "__main__":
     unittest.main()

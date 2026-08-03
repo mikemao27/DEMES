@@ -24,10 +24,11 @@ sentence structure to check against.
 WHAT THIS FILE DOES NOT YET DO, ON PURPOSE: This is real CCG composition for the sentence shapes DEMES has been built and tested against so far: simple declaratives,
 quantified noun phrases (multiple per sentence), plural nouns, negation, tense marking, transitive/intransitive verbs, attributive/predicative/comparative adjectives,
 adjunct/subordinate clauses, clausal complements ("John thinks that Mary is home"), whole-sentence "and"/"or" coordination (a dedicated, closed ternary chart rule,
-deliberately narrower than general CCG coordination: see COORDINATORS' own docstring), and passive voice ("The suitcase was kicked [by John]", is_passive on the
-resulting LogicalForm flagging that the surface subject is the PATIENT, not the AGENT). It does not yet handle wh-questions: those need more category assignments
-and a combinator (type-raising) that's implemented and tested here but not yet wired into the chart's automatic search, to keep the search space from exploding
-before there's a real need to. Extending coverage later means adding more category data, not rewriting this engine.
+deliberately narrower than general CCG coordination: see COORDINATORS' own docstring), passive voice ("The suitcase was kicked [by John]", is_passive on the resulting 
+LogicalForm flagging that the surface subject is the PATIENT, not the AGENT), and non-movement wh-questions ("Who walked?", "What is the suitcase?": the wh-word fills 
+an ordinary argument position directly; see WH_WORDS' own docstring for why real wh-movement, extracting a gap from an embedded position like "What did John kick?", is 
+deliberately out of scope). type_raise remains implemented and tested here but not wired into the chart's automatic search (real wh-movement is the mechanism that would need it), 
+to keep the search space from exploding before there's a real need to. Extending coverage later means adding more category data, not rewriting this engine.
 
 This file also does not resolve pronouns or decide what a sentence's truth value is: producing the correct sentence STRUCTURE is this file's job; resolving 
 what "it" refers to (core/discourse.py) and evaluating whether the sentence is true (core/semantics.py, core/world_model.py) are separate, later jobs 
@@ -228,6 +229,13 @@ COORDINATORS: Dict[str, str] = {"and": "AND", "or": "OR"}
 # other function-word table here, not an attempt to cover prepositions generally.
 PASSIVE_AGENT_MARKERS = {"by"}
 
+# Question words, scoped deliberately to Phase 2.6's narrow, non-movement wh-question patterns: the wh-word fills an ordinary argument position directly 
+# ("Who walked?": subject position, exactly where "John" would sit) rather than leaving a gap somewhere else in the tree that has to be tracked and passed up 
+# through arbitrary structure (real wh-movement, a substantially bigger mechanism this phase deliberately doesn't attempt: see this file's own top docstring). 
+# Deliberately NOT part of _FUNCTION_WORDS below, the same reasoning PRONOUNS itself documents: a wh-word IS the thing core/discourse.py's QUD stack needs to find 
+# in `arguments` afterward, so it must survive extraction rather than being filtered out as noise.
+WH_WORDS = {"who", "what"}
+
 _DETERMINER_LIKE = set(QUANTIFIERS) | DETERMINERS
 _PREDICATE_MODIFIER_WORDS = COPULA_PRESENT | COPULA_PAST | NEGATION_WORDS | FUTURE_MARKERS | PAST_AUX
 _FUNCTION_WORDS = (
@@ -344,6 +352,14 @@ def supertag_function_word(word: str) -> List[CCGCategory]:
     """
     if word in _DETERMINER_LIKE:
         return [DETERMINER]
+    if word in COPULA_PRESENT or word in COPULA_PAST:
+        # Ordinary predicative attachment ((S\NP)/(S\NP), unchanged from before) is the default, most likely reading; TRANSITIVE_VERB is offered as a 
+        # second candidate so an inverted copular question ("What is the suitcase?", "Who is John?") can parse too: the copula here behaves as an
+        # ordinary two-place identity relation between the wh-word and the following NP, exactly the same SVO combinatorics "John kicked the ball"
+        # already uses (see _extract_logical_form's own handling of this reading), not a new mechanism. The TRANSITIVE_VERB reading is inert whenever
+        # nothing NP-shaped actually follows (an ordinary adjectival complement like "portable" never is), so this never competes with the ordinary
+        # declarative reading.
+        return [PREDICATE_MODIFIER, TRANSITIVE_VERB]
     if word in _PREDICATE_MODIFIER_WORDS:
         return [PREDICATE_MODIFIER]
     if word in COMPARISON_MARKERS:
@@ -367,6 +383,11 @@ def supertag_function_word(word: str) -> List[CCGCategory]:
         return [COORD_ATOM]
     if word in PASSIVE_AGENT_MARKERS:
         return [BY_AGENT]
+    if word in WH_WORDS:
+        # Plain NP, the same category an ordinary pronoun or proper noun gets: this is what makes a SUBJECT wh-question ("Who walked?") parse with zero
+        # new combinators at all: "who" simply occupies subject position exactly where "John" would. The inverted copular-question pattern above is
+        # what additionally lets "What is the suitcase?" parse, using this same NP category for "what" on the other side of that combination.
+        return [NP]
 
     return []
 
@@ -596,6 +617,22 @@ class ChartParser:
         # Quantifier words are already excluded here (they're in _FUNCTION_WORDS, the same closed set determiners belong to): the noun each one restricts is not, and remains a
         # normal content leaf, exactly like an ordinary determiner's noun would.
         content_leaves = [leaf for leaf in leaves if leaf.token not in _FUNCTION_WORDS]
+
+        # A copula used as an identity/equality relation ("What IS the suitcase?", "Who IS John?": the inverted-copular-question pattern from Phase 2.6, though nothing restricts it to 
+        # questions specifically: "John is a teacher" would hit this exact same path) is itself the sentence's predicate: unlike an ordinary adjectival copula, where the ADJECTIVE leaf 
+        # carries the predicate-shaped category and the copula is just a semantically-transparent modifier. Because the copula is a function word, it's already gone from content_leaves 
+        # by this point and would never be found by the ordinary predicate search below, so this has to be checked for first, the same priority CLAUSAL_VERB gets.
+        copula_relation_leaf = next(
+            (leaf for leaf in leaves if leaf.token in COPULA_PRESENT or leaf.token in COPULA_PAST if leaf.label == repr(TRANSITIVE_VERB)),
+            None,
+        )
+        if copula_relation_leaf is not None:
+            return LogicalForm(
+                predicate = "IS",
+                arguments = [leaf.token for leaf in content_leaves],
+                is_negated = any(leaf.token in NEGATION_WORDS for leaf in leaves),
+                tense = self._detect_tense(leaves),
+            )
 
         # A clausal verb (e.g. "thinks" in "John thinks that Mary is home") always IS the matrix predicate whenever one is present: its complement is a full embedded sentence, which
         # necessarily contains its own predicate-shaped leaf (here, "home") later in this same flat leaf list. An ordinary rightmost-scan would find that embedded predicate instead and

@@ -44,7 +44,7 @@ class TestPipelineBase(unittest.TestCase):
 class TestBasicTurn(TestPipelineBase):
     def test_payload_shape(self):
         result = self.pipeline.process_utterance("The suitcase is portable.")
-        for key in ("raw_text", "logical_form", "semantics", "speech_act", "word_senses", "implicatures", "accommodated_presuppositions", "focus", "cataphora_resolutions", "modal_context"):
+        for key in ("raw_text", "logical_form", "semantics", "speech_act", "word_senses", "implicatures", "accommodated_presuppositions", "focus", "cataphora_resolutions", "modal_context", "qud_entry"):
             self.assertIn(key, result)
 
     def test_declarative_evaluates_true(self):
@@ -204,6 +204,30 @@ class TestModalAttitudeIntegration(TestPipelineBase):
     def test_ordinary_flat_sentences_open_no_modal_context(self):
         result = self.pipeline.process_utterance("The suitcase is portable.")
         self.assertIsNone(result["modal_context"])
+
+class TestQUDIntegration(TestPipelineBase):
+    """
+    Phase 2.6's actual deliverable: core/discourse.py's QUDStack (correct and tested standalone since Phase 1) auto-populates from a real wh-question
+    parse for the first time, rather than only working when a QUDEntry is constructed by hand.
+    """
+    def test_subject_wh_question_pushes_a_qud_entry(self):
+        result = self.pipeline.process_utterance("Who walked?")
+        self.assertEqual(result["qud_entry"], {"predicate": "WALKED", "arguments": ["who"], "open_slot_index": 0})
+        self.assertEqual(self.pipeline.qud_stack.current().predicate, "WALKED")
+
+    def test_inverted_copular_question_pushes_a_qud_entry(self):
+        result = self.pipeline.process_utterance("What is the suitcase?")
+        self.assertEqual(result["qud_entry"], {"predicate": "IS", "arguments": ["what", "suitcase"], "open_slot_index": 0})
+
+    def test_ordinary_declarative_does_not_touch_the_qud_stack(self):
+        result = self.pipeline.process_utterance("The suitcase is portable.")
+        self.assertIsNone(result["qud_entry"])
+        self.assertIsNone(self.pipeline.qud_stack.current())
+
+    def test_qud_stack_persists_the_most_recent_question_across_turns(self):
+        self.pipeline.process_utterance("Who walked?")
+        self.pipeline.process_utterance("The suitcase is portable.")
+        self.assertEqual(self.pipeline.qud_stack.current().predicate, "WALKED")
 
 class TestCoordinationIntegration(TestPipelineBase):
     """

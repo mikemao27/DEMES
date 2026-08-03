@@ -36,6 +36,9 @@ WHAT ONE TURN ACTUALLY DOES, IN ORDER:
     open a Modal & Attitude context for the matrix subject and assert the embedded clause into that context only, never into global reality: this is what keeps "John thinks Mary is home" from corrupting what
     DEMES knows to actually be true.
 
+    12. If a wh-word ("who"/"what") is among the arguments (a non-movement wh-question core/parser.py could actually produce, e.g. "Who walked?" or "What is the suitcase?") push a QUDEntry marking that argument 
+    position as the open slot onto this pipeline's persistent QUDStack, so a later bare-fragment answer has something real to fill in.
+
 A COORDINATED sentence ("John left and Mary left") runs every step above uniformly over a list of conjuncts (one conjunct for an ordinary sentence, two for a coordinated one) rather than as a special case bolted 
 on afterward: each conjunct gets its own noun registration, pronoun resolution, and truth evaluation, and the coordinator's own connective (AND/OR, from core/parser.py's get_coordinator_connective) combines their 
 individual truth values into the turn's overall one.
@@ -50,7 +53,7 @@ from typing import Dict, Any, List, Optional
 
 from core.types import LogicalForm, ModalFlavor
 from core.lexicon import LexiconManager
-from core.parser import ChartParser, get_pronoun_features, get_coordinator_connective, get_coordination_conjuncts
+from core.parser import ChartParser, get_pronoun_features, get_coordinator_connective, get_coordination_conjuncts, WH_WORDS
 from core.world_model import WorldModel
 from core.world_model import get_presupposition_trigger as _get_presupposition_trigger
 from core.semantics import SemanticCompiler
@@ -63,6 +66,8 @@ from core.discourse import (
     detect_focus,
     accommodate_presupposition,
     generate_scalar_implicature,
+    QUDEntry,
+    QUDStack,
 )
 
 _PRONOUN_TOKENS = {"it", "he", "him", "she", "her", "they", "them"}
@@ -85,6 +90,7 @@ class DEMESPipeline:
         self.world_model = WorldModel()
         self.parser = ChartParser(self.lexicon)
         self.compiler = SemanticCompiler(self.world_model, self.lexicon)
+        self.qud_stack = QUDStack()
 
     def process_utterance(self, raw_text: str) -> Dict[str, Any]:
         """
@@ -117,6 +123,7 @@ class DEMESPipeline:
             self.world_model.record_event(conjunct.predicate, roles={}, tense=conjunct.tense)
 
         modal_context = self._open_modal_attitude_context(representative_form)
+        qud_entry = self._update_qud_stack(representative_form)
 
         if is_coordinated:
             semantic_payload = self._combine_coordinated_payloads(derivation_tree, conjunct_payloads)
@@ -136,6 +143,7 @@ class DEMESPipeline:
             "focus": focused_constituent,
             "cataphora_resolutions": cataphora_resolutions,
             "modal_context": modal_context,
+            "qud_entry": qud_entry,
         }
 
     # Coordination: combining a coordinated sentence's per-conjunct payloads into one turn-level result.
@@ -185,6 +193,35 @@ class DEMESPipeline:
         self.world_model.assert_fact_in_context(context.id, embedded_form.predicate, str(embedded_form.arguments[0]))
 
         return {"context_id": context.id, "holder": holder, "modal_flavor": modal_flavor.value}
+
+    # Question Under Discussion (QUD) stack auto-population.
+    def _update_qud_stack(self, logical_form) -> Optional[Dict[str, Any]]:
+        """
+        If `logical_form` contains a wh-word among its arguments (core/parser.py's WH_WORDS - only the non-movement question patterns the grammar
+        actually supports: the wh-word fills an ordinary argument position directly, e.g. "Who walked?" -> arguments ["who"], "What is the suitcase?"
+        -> arguments ["what", "suitcase"]), pushes a QUDEntry marking that position as the open slot onto this pipeline's persistent QUDStack. This is
+        what makes core/discourse.py's QUDStack, correct and tested standalone since Phase 1, but never populated by any real parse until wh-questions
+        existed at all, actually reachable: a later bare-fragment answer can now call self.qud_stack.resolve_fragment(...) against something real. Not
+        wired to any caller here yet (fragment answers as their own utterance shape aren't part of this sub-step); this is the population half only.
+        """
+        if not logical_form or not logical_form.arguments:
+            return None
+
+        open_slot_index = next(
+            (i for i, argument in enumerate(logical_form.arguments) if isinstance(argument, str) and argument.lower() in WH_WORDS),
+            None,
+        )
+        if open_slot_index is None:
+            return None
+
+        entry = QUDEntry(
+            predicate = logical_form.predicate,
+            arguments = [str(argument) for argument in logical_form.arguments],
+            open_slot_index = open_slot_index,
+        )
+        self.qud_stack.push(entry)
+
+        return {"predicate": entry.predicate, "arguments": entry.arguments, "open_slot_index": entry.open_slot_index}
 
     # Discourse referents and pronoun resolution.
     def _register_noun_arguments(self, logical_form) -> None:
