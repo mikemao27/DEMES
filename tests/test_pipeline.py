@@ -44,7 +44,7 @@ class TestPipelineBase(unittest.TestCase):
 class TestBasicTurn(TestPipelineBase):
     def test_payload_shape(self):
         result = self.pipeline.process_utterance("The suitcase is portable.")
-        for key in ("raw_text", "logical_form", "semantics", "speech_act", "word_senses", "implicatures", "accommodated_presuppositions", "focus"):
+        for key in ("raw_text", "logical_form", "semantics", "speech_act", "word_senses", "implicatures", "accommodated_presuppositions", "focus", "cataphora_resolutions", "modal_context"):
             self.assertIn(key, result)
 
     def test_declarative_evaluates_true(self):
@@ -167,6 +167,43 @@ class TestFocusIntegration(TestPipelineBase):
     def test_focus_particle_identifies_the_focused_word(self):
         result = self.pipeline.process_utterance("Only John left.")
         self.assertEqual(result["focus"], "john")
+
+class TestModalAttitudeIntegration(TestPipelineBase):
+    """
+    Phase 2.3's actual deliverable: a clausal-complement mental-predicate verb ("thinks") auto-opens a Modal & Attitude context (core/world_model.py, built and tested 
+    standalone several files ago) for its subject and asserts the embedded clause into that context alone: never into global reality. This is the live-pipeline version 
+    of the "John thinks Mary is at home, but she isn't" scenario already proven at the world_model.py unit level.
+    """
+    def setUp(self):
+        super().setUp()
+        self.pipeline.lexicon.lexicon["mary"] = {"category": "proper_noun", "semantic_type": "e", "primitives": [], "valency": "none"}
+        self.pipeline.lexicon.lexicon["think"] = {"category": "verb", "semantic_type": "<s,<e,t>>", "primitives": [{"name": "THINK", "category": "mental"}], "valency": "clausal"}
+        self.pipeline.lexicon.lexicon["home"] = {"category": "adjective", "semantic_type": "<e,t>", "primitives": [{"name": "SOMEWHERE", "category": "entity"}], "valency": "none"}
+        self.pipeline.lexicon.lexicon["that"] = {"category": "function", "semantic_type": "None", "primitives": [], "valency": "none"}
+
+    def test_clausal_complement_opens_an_epistemic_context_for_the_matrix_subject(self):
+        result = self.pipeline.process_utterance("John thinks that Mary is home.")
+        self.assertIsNotNone(result["modal_context"])
+        self.assertEqual(result["modal_context"]["holder"], "john")
+        self.assertEqual(result["modal_context"]["modal_flavor"], "epistemic")
+
+    def test_embedded_belief_is_isolated_from_global_knowledge(self):
+        self.pipeline.process_utterance("John thinks that Mary is home.")
+        self.assertNotIn("home", self.pipeline.world_model.knowledge_base)
+
+    def test_embedded_belief_is_recorded_in_its_own_context(self):
+        result = self.pipeline.process_utterance("John thinks that Mary is home.")
+        context_id = result["modal_context"]["context_id"]
+        self.assertIn("mary", self.pipeline.world_model.context_facts[context_id]["home"])
+
+    def test_a_contradicting_global_assertion_is_unaffected_by_the_belief_context(self):
+        self.pipeline.process_utterance("John thinks that Mary is home.")
+        result = self.pipeline.process_utterance("Mary is not home.")
+        self.assertFalse(result["semantics"]["truth_value"])
+
+    def test_ordinary_flat_sentences_open_no_modal_context(self):
+        result = self.pipeline.process_utterance("The suitcase is portable.")
+        self.assertIsNone(result["modal_context"])
 
 class TestIdiomIntegration(TestPipelineBase):
     def test_idiom_meaning_is_attached_to_the_payload(self):

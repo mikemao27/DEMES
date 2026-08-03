@@ -95,6 +95,8 @@ SENTENCE_MODIFIER = CCGCategory(S, S, "/") # S/S: something that turns one follo
 # and the subject genuinely does c-command into it (that's exactly why "*He arrived before John did" is bad for intended coreference, unlike the fronted "Before he arrived, John left"). 
 # Attaching at the VP means the subject and the adjunct both end up under the same S node once the subject combines, giving c-command tests the right geometry to work with.
 TRAILING_VP_MODIFIER = CCGCategory(INTRANSITIVE_VERB, INTRANSITIVE_VERB, "\\") # (S\NP)\(S\NP).
+CLAUSAL_VERB = CCGCategory(INTRANSITIVE_VERB, S, "/") # (S\NP)/S: a mental-predicate verb like "think" taking a full embedded sentence as its complement, not an NP.
+COMPLEMENTIZER = CCGCategory(S, S, "/") # S/S: "that", consuming its clause directly to produce a complete S in one step: unlike a subordinator, which needs an extra step (see ADJUNCT_TAKING) before it can attach to a matrix clause.
 ADJUNCT_TAKING = CCGCategory(SENTENCE_MODIFIER, S, "/") # (S/S)/S: a subordinator like "before" in fronted position, consuming its own clause first.
 TRAILING_ADJUNCT_TAKING = CCGCategory(TRAILING_VP_MODIFIER, S, "/") # ((S\NP)\(S\NP))/S: the same subordinator in trailing position.
 
@@ -193,9 +195,13 @@ FOCUS_PARTICLES = {"only", "even"}
 # here: not an attempt to cover every English subordinator, just the ones needed to make adjunct clauses parseable at all.
 SUBORDINATORS = {"before", "after", "while", "when"}
 
+# The complementizer introducing a finite clausal complement ("John thinks THAT Mary is home"). Deliberately not extended to infinitival-complement verbs 
+# ("want to leave"): that's a genuinely different construction (an infinitive "to" + bare verb, not a finite embedded sentence) and isn't attempted here.
+COMPLEMENTIZER_WORDS = {"that"}
+
 _DETERMINER_LIKE = set(QUANTIFIERS) | DETERMINERS
 _PREDICATE_MODIFIER_WORDS = COPULA_PRESENT | COPULA_PAST | NEGATION_WORDS | FUTURE_MARKERS | PAST_AUX
-_FUNCTION_WORDS = _DETERMINER_LIKE | _PREDICATE_MODIFIER_WORDS | COMPARISON_MARKERS | FOCUS_PARTICLES | SUBORDINATORS
+_FUNCTION_WORDS = _DETERMINER_LIKE | _PREDICATE_MODIFIER_WORDS | COMPARISON_MARKERS | FOCUS_PARTICLES | SUBORDINATORS | COMPLEMENTIZER_WORDS
 
 # Pronouns are closed-class function words syntactically (the same status as determiners or negation) so their category and agreement features come 
 # from this fixed table, never from a lexicon.json entry. (An earlier design routed them through the ordinary lexicon, which required giving them a 
@@ -250,6 +256,9 @@ def supertag_content_word(word: str, lexicon_entry: Dict, inflection: Optional[s
             return [TRANSITIVE_VERB]
         if valency == "ditransitive":
             return [DITRANSITIVE_VERB]
+        if valency == "clausal":
+            return [CLAUSAL_VERB]
+        
         return [INTRANSITIVE_VERB]
     
     if category == "adjective":
@@ -279,6 +288,8 @@ def supertag_function_word(word: str) -> List[CCGCategory]:
         # Both orders are offered as candidates ("Before X, Y" and "Y before X"): which one actually combines into a complete S is left for the chart to discover, the same way
         # an adjective's predicative-vs-attributive reading is.
         return [ADJUNCT_TAKING, TRAILING_ADJUNCT_TAKING]
+    if word in COMPLEMENTIZER_WORDS:
+        return [COMPLEMENTIZER]
 
     return []
 
@@ -468,27 +479,42 @@ class ChartParser:
         arguments, because extraction runs over the matrix clause's own subtree specifically, not the whole tree's flattened leaves.
         """
         leaves = self._matrix_clause_leaves(root)
-        is_negated = any(leaf.token in NEGATION_WORDS for leaf in leaves)
-        tense = self._detect_tense(leaves)
-
-        quantifier_store = self._collect_stored_quantifiers(root, leaves)
 
         # Quantifier words are already excluded here (they're in _FUNCTION_WORDS, the same closed set determiners belong to): the noun each one restricts is not, and remains a
         # normal content leaf, exactly like an ordinary determiner's noun would.
         content_leaves = [leaf for leaf in leaves if leaf.token not in _FUNCTION_WORDS]
 
+        # A clausal verb (e.g. "thinks" in "John thinks that Mary is home") always IS the matrix predicate whenever one is present: its complement is a full embedded sentence, which
+        # necessarily contains its own predicate-shaped leaf (here, "home") later in this same flat leaf list. An ordinary rightmost-scan would find that embedded predicate instead and
+        # mistake it for the matrix one, so a clausal-verb leaf is checked for and preferred first.
         predicate_index = None
-        for i in range(len(content_leaves) - 1, -1, -1):
-            leaf = content_leaves[i]
-
-            if leaf.label in (repr(PREDICATIVE_ADJECTIVE), repr(COMPARATIVE_PREDICATIVE)) or self._is_verb_leaf(leaf):
+        for i, leaf in enumerate(content_leaves):
+            if leaf.label == repr(CLAUSAL_VERB):
                 predicate_index = i
                 break
+
+        if predicate_index is None:
+            for i in range(len(content_leaves) - 1, -1, -1):
+                leaf = content_leaves[i]
+
+                if leaf.label in (repr(PREDICATIVE_ADJECTIVE), repr(COMPARATIVE_PREDICATIVE)) or self._is_verb_leaf(leaf):
+                    predicate_index = i
+                    break
 
         if predicate_index is None:
             predicate_index = len(content_leaves) - 1
 
         predicate_leaf = content_leaves[predicate_index]
+
+        if predicate_leaf.label == repr(CLAUSAL_VERB):
+            # A clausal verb's complement is a full embedded sentence, not a flat argument list: handled entirely separately (including its OWN negation/tense, read from only its own content, 
+            # not inherited from, or leaking into, the matrix clause's).
+            return self._extract_clausal_form(root, predicate_leaf, content_leaves, predicate_index, leaves)
+
+        is_negated = any(leaf.token in NEGATION_WORDS for leaf in leaves)
+        tense = self._detect_tense(leaves)
+        quantifier_store = self._collect_stored_quantifiers(root, leaves)
+
         argument_leaves = content_leaves[:predicate_index] + content_leaves[predicate_index + 1:]
         arguments = [leaf.token for leaf in argument_leaves if leaf.token not in COMPARISON_MARKERS]
         plural_arguments = [leaf.token for leaf in argument_leaves if self._is_plural_noun_leaf(leaf)]
@@ -515,6 +541,49 @@ class ChartParser:
             form.predicate = f"IDIOM:{predicate_lemma}_{idiom_object}"
 
         return form
+
+    def _extract_clausal_form(
+        self,
+        root: DerivationNode,
+        verb_leaf: DerivationNode,
+        content_leaves: List[DerivationNode],
+        predicate_index: int,
+        matrix_scoped_leaves: List[DerivationNode],
+    ) -> LogicalForm:
+        """
+        Builds a LogicalForm for a mental-predicate verb ("John thinks that Mary is home") whose complement is a full embedded sentence, not a flat argument list. 
+        The subject is whatever content leaf(s) precede the verb. The complement clause itself is found via the verb leaf's sibling in the tree (built by forward application, 
+        (S\\NP)/S + S -> S\\NP: the same parent-and-sibling pattern _collect_stored_quantifiers uses for a quantifier's restrictor) and recursively extracted as its OWN nested 
+        LogicalForm via a fresh call to _extract_logical_form, which is what correctly gives the complement its own negation and tense, read only from its own content.
+
+        The matrix clause's own negation/tense are computed from matrix_scoped_leaves MINUS whichever leaves belong to the complement (by identity, not by assuming negation sits in
+        any one fixed position): deliberately not just "whatever comes before the verb", because negation for a clausal verb can attach to the whole "verb + complement" constituent
+        ("John does NOT think that Mary is home" negates the matrix, not stated positionally adjacent to "think" alone) rather than sitting between subject and verb.
+        """
+        subject_leaves = content_leaves[:predicate_index]
+        arguments: List[Any] = [leaf.token for leaf in subject_leaves]
+
+        parent = find_parent(root, verb_leaf)
+        complement_node = None
+        if parent is not None:
+            complement_node = next((child for child in parent.children if child is not verb_leaf), None)
+
+        complement_leaf_ids = set()
+        if complement_node is not None:
+            embedded_form = self._extract_logical_form(complement_node)
+            complement_leaf_ids = {id(leaf) for leaf in collect_leaves(complement_node)}
+            arguments.append(embedded_form)
+
+        matrix_only_leaves = [leaf for leaf in matrix_scoped_leaves if id(leaf) not in complement_leaf_ids]
+        matrix_is_negated = any(leaf.token in NEGATION_WORDS for leaf in matrix_only_leaves)
+        matrix_tense = self._detect_tense(matrix_only_leaves)
+
+        return LogicalForm(
+            predicate = verb_leaf.token.upper(),
+            arguments = arguments,
+            is_negated = matrix_is_negated,
+            tense = matrix_tense,
+        )
 
     def _matrix_clause_leaves(self, root: DerivationNode) -> List[DerivationNode]:
         """
@@ -574,7 +643,7 @@ class ChartParser:
         return self.lexicon.detect_inflection(leaf.token) == "plural_or_third_person"
 
     def _is_verb_leaf(self, leaf: DerivationNode) -> bool:
-        return leaf.label in (repr(INTRANSITIVE_VERB), repr(TRANSITIVE_VERB), repr(DITRANSITIVE_VERB))
+        return leaf.label in (repr(INTRANSITIVE_VERB), repr(TRANSITIVE_VERB), repr(DITRANSITIVE_VERB), repr(CLAUSAL_VERB))
 
     def _detect_tense(self, leaves: List[DerivationNode]) -> str:
         tokens_present = {leaf.token for leaf in leaves}

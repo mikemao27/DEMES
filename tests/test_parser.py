@@ -216,6 +216,10 @@ class TestChartParserEndToEnd(unittest.TestCase):
         self.lexicon.lexicon["enter"] = {"category": "verb", "semantic_type": "<e,<e,t>>", "primitives": [{"name": "MOVE", "category": "action"}], "valency": "transitive"}
         self.lexicon.lexicon["room"] = {"category": "noun", "semantic_type": "e", "primitives": [{"name": "SOMETHING", "category": "entity"}], "valency": "none"}
         self.lexicon.lexicon["walk"] = {"category": "verb", "semantic_type": "<e,t>", "primitives": [{"name": "MOVE", "category": "action"}], "valency": "intransitive"}
+        self.lexicon.lexicon["mary"] = {"category": "proper_noun", "semantic_type": "e", "primitives": [], "valency": "none"}
+        self.lexicon.lexicon["think"] = {"category": "verb", "semantic_type": "<s,<e,t>>", "primitives": [{"name": "THINK", "category": "mental"}], "valency": "clausal"}
+        self.lexicon.lexicon["home"] = {"category": "adjective", "semantic_type": "<e,t>", "primitives": [{"name": "SOMEWHERE", "category": "entity"}], "valency": "none"}
+        self.lexicon.lexicon["that"] = {"category": "function", "semantic_type": "None", "primitives": [], "valency": "none"}
 
         self.parser = ChartParser(self.lexicon)
 
@@ -331,6 +335,65 @@ class TestChartParserEndToEnd(unittest.TestCase):
         form = self.parser.parse("It is portable.")
         self.assertEqual(form.predicate, "PORTABLE")
         self.assertEqual(form.arguments, ["it"])
+
+class TestClausalComplements(unittest.TestCase):
+    """
+    Phase 2.3: mental-predicate verbs ("think") taking a full embedded sentence as their complement, rather than a flat NP argument, and the transparent "that" complementizer that 
+    optionally introduces it. The whole point is that the complement gets its own real, independently-extracted LogicalForm (with its own negation and tense) rather than the matrix 
+    and embedded clauses' content being flattened together or leaking into each other.
+    """
+    def setUp(self):
+        self.test_dir = "tests/temp_data_parser_clausal"
+        os.makedirs(self.test_dir, exist_ok = True)
+        self.store_path = os.path.join(self.test_dir, "lexicon.json")
+        self.lexicon = LexiconManager(store_path = self.store_path)
+
+        self.lexicon.lexicon["john"] = {"category": "proper_noun", "semantic_type": "e", "primitives": [], "valency": "none"}
+        self.lexicon.lexicon["mary"] = {"category": "proper_noun", "semantic_type": "e", "primitives": [], "valency": "none"}
+        self.lexicon.lexicon["think"] = {"category": "verb", "semantic_type": "<s,<e,t>>", "primitives": [{"name": "THINK", "category": "mental"}], "valency": "clausal"}
+        self.lexicon.lexicon["home"] = {"category": "adjective", "semantic_type": "<e,t>", "primitives": [{"name": "SOMEWHERE", "category": "entity"}], "valency": "none"}
+        self.lexicon.lexicon["that"] = {"category": "function", "semantic_type": "None", "primitives": [], "valency": "none"}
+
+        self.parser = ChartParser(self.lexicon)
+
+    def tearDown(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_clausal_complement_with_complementizer_produces_a_nested_logical_form(self):
+        form = self.parser.parse("John thinks that Mary is home.")
+        self.assertEqual(form.predicate, "THINKS")
+        self.assertEqual(form.arguments[0], "john")
+        embedded = form.arguments[1]
+        self.assertEqual(embedded.predicate, "HOME")
+        self.assertEqual(embedded.arguments, ["mary"])
+
+    def test_complementizer_is_optional(self):
+        form = self.parser.parse("John thinks Mary is home.")
+        self.assertEqual(form.predicate, "THINKS")
+        embedded = form.arguments[1]
+        self.assertEqual(embedded.predicate, "HOME")
+
+    def test_embedded_negation_stays_scoped_to_the_embedded_clause_only(self):
+        form = self.parser.parse("John thinks Mary is not home.")
+        self.assertFalse(form.is_negated)
+        embedded = form.arguments[1]
+        self.assertTrue(embedded.is_negated)
+
+    def test_matrix_negation_around_the_whole_complement_is_scoped_to_the_matrix_only(self):
+        # "did not think" negates the matrix attitude itself, not John's belief about where Mary is - the embedded clause's own truth stays untouched.
+        form = self.parser.parse("John did not think that Mary is home.")
+        self.assertTrue(form.is_negated)
+        self.assertEqual(form.tense, "past")
+        embedded = form.arguments[1]
+        self.assertFalse(embedded.is_negated)
+
+    def test_matrix_predicate_is_the_clausal_verb_not_the_embedded_predicate(self):
+        # The rightmost-predicate-shaped-leaf heuristic used for flat sentences would wrongly pick "home" (the embedded predicate) here, since it comes
+        # later in the flat leaf sequence than "thinks" does: a clausal-verb leaf must be preferred whenever one is present.
+        form = self.parser.parse("John thinks that Mary is home.")
+        self.assertNotEqual(form.predicate, "HOME")
+        self.assertEqual(form.predicate, "THINKS")
 
     def test_parse_with_derivation_exposes_the_tree(self):
         form, root = self.parser.parse_with_derivation("The suitcase is portable.")
