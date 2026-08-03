@@ -205,6 +205,49 @@ class TestModalAttitudeIntegration(TestPipelineBase):
         result = self.pipeline.process_utterance("The suitcase is portable.")
         self.assertIsNone(result["modal_context"])
 
+class TestCoordinationIntegration(TestPipelineBase):
+    """
+    Phase 2.4's actual deliverable: a coordinated sentence's conjuncts are each registered, resolved, and evaluated independently, then combined into
+    one turn-level truth value via the coordinator's own connective: ordinary propositional AND/OR, not a new evaluation mechanism.
+    """
+    def setUp(self):
+        super().setUp()
+        self.pipeline.lexicon.lexicon["walk"] = {"category": "verb", "semantic_type": "<e,t>", "primitives": [{"name": "MOVE", "category": "action"}], "valency": "intransitive"}
+
+    def test_and_coordination_is_true_only_when_both_conjuncts_are_true(self):
+        result = self.pipeline.process_utterance("The suitcase is portable and John walked.")
+        self.assertIsInstance(result["logical_form"], list)
+        self.assertEqual(result["semantics"]["connective"], "AND")
+        self.assertTrue(result["semantics"]["truth_value"])
+
+    def test_and_coordination_is_false_when_one_conjunct_is_false(self):
+        result = self.pipeline.process_utterance("The suitcase is not portable and John walked.")
+        self.assertEqual(result["semantics"]["connective"], "AND")
+        self.assertFalse(result["semantics"]["truth_value"])
+
+    def test_or_coordination_is_true_when_only_one_conjunct_is_true(self):
+        result = self.pipeline.process_utterance("The suitcase is not portable or John walked.")
+        self.assertEqual(result["semantics"]["connective"], "OR")
+        self.assertTrue(result["semantics"]["truth_value"])
+
+    def test_each_conjunct_is_available_in_the_combined_payload(self):
+        result = self.pipeline.process_utterance("The suitcase is portable and John walked.")
+        self.assertEqual(len(result["semantics"]["conjuncts"]), 2)
+
+    def test_pronoun_resolution_does_not_cross_between_conjuncts(self):
+        # "It" must resolve against the world model's active referents (backward resolution, from the earlier turn below), never forward to "John" in
+        # the other conjunct: two coordinated independent clauses aren't in the kind of subordinate relationship real cataphora requires.
+        self.pipeline.lexicon.lexicon["heavy"] = {"category": "adjective", "semantic_type": "<e,t>", "primitives": [{"name": "BIG", "category": "property"}], "valency": "none"}
+        self.pipeline.process_utterance("The suitcase is heavy.")
+        result = self.pipeline.process_utterance("It is heavy and John walked.")
+        self.assertEqual(result["logical_form"][0].arguments, ["suitcase"])
+        self.assertEqual(result["cataphora_resolutions"], [])
+
+    def test_ordinary_non_coordinated_sentences_are_unaffected(self):
+        result = self.pipeline.process_utterance("The suitcase is portable.")
+        self.assertNotIsInstance(result["logical_form"], list)
+        self.assertEqual(result["semantics"]["truth_value"], True)
+
 class TestIdiomIntegration(TestPipelineBase):
     def test_idiom_meaning_is_attached_to_the_payload(self):
         result = self.pipeline.process_utterance("John kicked the bucket.")

@@ -19,6 +19,7 @@ from core.parser import (
     type_raise,
     supertag_content_word, supertag_function_word,
     get_pronoun_features,
+    get_coordination_conjuncts, get_coordinator_connective,
     find_parent, c_commands, collect_leaves, check_npi_licensing,
     ChartParser,
 )
@@ -272,7 +273,7 @@ class TestChartParserEndToEnd(unittest.TestCase):
         form = self.parser.parse("Every student read a book.")
         self.assertEqual(form.predicate, "READ")
         self.assertEqual(set(form.arguments), {"student", "book"})
-        self.assertIsNone(form.quantifier_meta)  # Not the single-quantifier shape.
+        self.assertIsNone(form.quantifier_meta) # Not the single-quantifier shape.
         operators_by_restrictor = {q.restrictor: q.operator for q in form.quantifier_store}
         self.assertEqual(operators_by_restrictor, {"STUDENT": "FORALL", "BOOK": "EXISTS"})
 
@@ -405,6 +406,73 @@ class TestClausalComplements(unittest.TestCase):
         form, root = self.parser.parse_with_derivation("Quantum mechanics is weird")
         self.assertIsNone(form)
         self.assertIsNone(root)
+
+class TestCoordination(unittest.TestCase):
+    """
+    Phase 2.4: a dedicated, closed ternary combination rule (alongside application/composition) for "X and X -> X" / "X or X -> X" coordination,
+    deliberately narrower than general CCG coordination (which would need a category variable the algebra here doesn't support). The whole point is
+    that each conjunct gets extracted as its own independent LogicalForm, not flattened together.
+    """
+    def setUp(self):
+        self.test_dir = "tests/temp_data_parser_coordination"
+        os.makedirs(self.test_dir, exist_ok = True)
+        self.store_path = os.path.join(self.test_dir, "lexicon.json")
+        self.lexicon = LexiconManager(store_path = self.store_path)
+
+        self.lexicon.lexicon["john"] = {"category": "proper_noun", "semantic_type": "e", "primitives": [], "valency": "none"}
+        self.lexicon.lexicon["mary"] = {"category": "proper_noun", "semantic_type": "e", "primitives": [], "valency": "none"}
+        self.lexicon.lexicon["walk"] = {"category": "verb", "semantic_type": "<e,t>", "primitives": [{"name": "MOVE", "category": "action"}], "valency": "intransitive"}
+        self.lexicon.lexicon["suitcase"] = {"category": "noun", "semantic_type": "e", "primitives": [{"name": "SOMETHING", "category": "entity"}], "valency": "none"}
+        self.lexicon.lexicon["trophy"] = {"category": "noun", "semantic_type": "e", "primitives": [{"name": "SOMETHING", "category": "entity"}], "valency": "none"}
+        self.lexicon.lexicon["heavy"] = {"category": "adjective", "semantic_type": "<e,t>", "primitives": [{"name": "BIG", "category": "property"}], "valency": "none"}
+
+        self.parser = ChartParser(self.lexicon)
+
+    def tearDown(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_whole_sentence_coordination_produces_a_list_of_conjuncts(self):
+        form = self.parser.parse("John walked and Mary walked.")
+        self.assertIsInstance(form, list)
+        self.assertEqual(len(form), 2)
+        self.assertEqual(form[0].predicate, "WALKED")
+        self.assertEqual(form[0].arguments, ["john"])
+        self.assertEqual(form[1].predicate, "WALKED")
+        self.assertEqual(form[1].arguments, ["mary"])
+
+    def test_or_coordination_also_produces_conjuncts(self):
+        form = self.parser.parse("John walked or Mary walked.")
+        self.assertIsInstance(form, list)
+        self.assertEqual(len(form), 2)
+
+    def test_coordinator_connective_is_exposed_for_and(self):
+        _form, tree = self.parser.parse_with_derivation("John walked and Mary walked.")
+        self.assertEqual(get_coordinator_connective(tree), "AND")
+
+    def test_coordinator_connective_is_exposed_for_or(self):
+        _form, tree = self.parser.parse_with_derivation("John walked or Mary walked.")
+        self.assertEqual(get_coordinator_connective(tree), "OR")
+
+    def test_get_coordination_conjuncts_returns_none_for_an_ordinary_sentence(self):
+        _form, tree = self.parser.parse_with_derivation("John walked.")
+        self.assertIsNone(get_coordination_conjuncts(tree))
+        self.assertIsNone(get_coordinator_connective(tree))
+
+    def test_np_level_coordination_inside_a_single_clause_still_parses(self):
+        # Not detected as a top-level coordinated result (the sentence's own predicate is singular, "heavy"): the coordinated NP's two nouns just
+        # both survive as ordinary flat arguments, the same honest flat-extraction limitation _extract_logical_form already documents elsewhere.
+        form = self.parser.parse("The suitcase or the trophy is heavy.")
+        self.assertNotIsInstance(form, list)
+        self.assertEqual(form.predicate, "HEAVY")
+        self.assertIn("suitcase", form.arguments)
+        self.assertIn("trophy", form.arguments)
+
+    def test_negation_stays_scoped_to_its_own_conjunct(self):
+        form = self.parser.parse("The suitcase is not heavy and the trophy is heavy.")
+        self.assertIsInstance(form, list)
+        self.assertTrue(form[0].is_negated)
+        self.assertFalse(form[1].is_negated)
 
 if __name__ == "__main__":
     unittest.main()

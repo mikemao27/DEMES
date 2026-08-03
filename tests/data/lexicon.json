@@ -1,0 +1,43 @@
+{
+    "walk": {
+        "category": "verb",
+        "semantic_type": "<e, t>",
+        "primitives": [
+            {
+                "name": "MOVE",
+                "category": "action"
+            },
+            {
+                "name": "BODY",
+                "category": "entity"
+            }
+        ],
+        "valency": "intransitive"
+    },
+    "suitcase": {
+        "category": "noun",
+        "semantic_type": "e",
+        "primitives": [
+            {
+                "name": "SOMETHING",
+                "category": "entity"
+            }
+        ],
+        "valency": "none"
+    },
+    "portable": {
+        "category": "adjective",
+        "semantic_type": "<e, t>",
+        "primitives": [
+            {
+                "name": "CAN",
+                "category": "logical"
+            },
+            {
+                "name": "MOVE",
+                "category": "action"
+            }
+        ],
+        "valency": "none"
+    }
+}

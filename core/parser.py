@@ -21,18 +21,19 @@ The tree of how words combined (a DerivationNode, from core/types.py) is kept ar
 deciding whether a pronoun may refer to a name later in the same sentence, or whether a word like "any" is licensed by a nearby negation, have real 
 sentence structure to check against.
 
-WHAT THIS FILE DOES NOT YET DO, ON PURPOSE: This is real CCG composition for the sentence shapes DEMES has been built and tested against so far: simple declaratives, 
-quantified noun phrases, negation, tense marking, transitive/intransitive verbs, and attributive/predicative/comparative adjectives. It does not yet handle coordination
-("and"/"or"), embedded clauses, passive voice, or wh-questions: those need more category assignments and, in a couple of cases, combinators (type-raising) 
-that are implemented and tested here but not yet wired into the chart's automatic search, to keep the search space from exploding
-before there's a real need to. Extending coverage later means adding more category data, not rewriting this engine.
+WHAT THIS FILE DOES NOT YET DO, ON PURPOSE: This is real CCG composition for the sentence shapes DEMES has been built and tested against so far: simple declaratives,
+quantified noun phrases (multiple per sentence), plural nouns, negation, tense marking, transitive/intransitive verbs, attributive/predicative/comparative adjectives,
+adjunct/subordinate clauses, clausal complements ("John thinks that Mary is home"), and whole-sentence "and"/"or" coordination (a dedicated, closed ternary chart rule,
+deliberately narrower than general CCG coordination: see COORDINATORS' own docstring). It does not yet handle passive voice or wh-questions: those need more category
+assignments and, in a couple of cases, combinators (type-raising) that are implemented and tested here but not yet wired into the chart's automatic search, to keep the
+search space from exploding before there's a real need to. Extending coverage later means adding more category data, not rewriting this engine.
 
 This file also does not resolve pronouns or decide what a sentence's truth value is: producing the correct sentence STRUCTURE is this file's job; resolving 
 what "it" refers to (core/discourse.py) and evaluating whether the sentence is true (core/semantics.py, core/world_model.py) are separate, later jobs 
 that consume this file's output.
 """
 
-from typing import List, Dict, Optional, Tuple, Any
+from typing import List, Dict, Optional, Tuple, Any, Union
 
 from core.types import LogicalForm, DerivationNode, Gender, GrammaticalNumber, StoredQuantifier
 
@@ -76,6 +77,12 @@ S = CCGCategory("S")
 NP = CCGCategory("NP")
 N = CCGCategory("N")
 PP = CCGCategory("PP")
+
+# A coordinator ("and"/"or") deliberately gets an atomic category that is inert under every ordinary combinator (try_forward_application etc. all bail
+# out immediately on an atomic left/right, per their own guards above): it can never combine with a neighbor via application or composition. It is
+# consumed only by the dedicated ternary coordination rule in ChartParser._run_chart, so tagging it this way guarantees it can't spuriously participate
+# in any other derivation.
+COORD_ATOM = CCGCategory("COORD")
 
 # Complex categories built out of the atomic ones, given readable names.
 INTRANSITIVE_VERB = CCGCategory(S, NP, "\\") # S\NP.
@@ -165,6 +172,12 @@ _APPLICATION_PENALTY = 0
 # Penalizing composition relative to application is the standard fix: it doesn't disable composition (still explored, and still wins when it's the only way to succeed), 
 # it just means a plain-application derivation is preferred over a composition-based one whenever the chart actually has a choice between two derivations of the same category.
 _COMPOSITION_PENALTY = 1
+
+# Coordination competes for the same span as ordinary application/composition would, but never redundantly (nothing else can produce a valid category
+# for a span whose middle token is a bare coordinator: application/composition would need it to combine with a real category on one side, and
+# COORD_ATOM is inert), so this penalty exists for consistency with the other two mechanisms' documented ranking discipline rather than to resolve any
+# known ambiguity.
+_COORDINATION_PENALTY = 1
 _COMBINATOR_RULES: Tuple[Tuple[str, Any, int], ...] = (
     (">", try_forward_application, _APPLICATION_PENALTY),
     ("<", try_backward_application, _APPLICATION_PENALTY),
@@ -195,13 +208,18 @@ FOCUS_PARTICLES = {"only", "even"}
 # here: not an attempt to cover every English subordinator, just the ones needed to make adjunct clauses parseable at all.
 SUBORDINATORS = {"before", "after", "while", "when"}
 
-# The complementizer introducing a finite clausal complement ("John thinks THAT Mary is home"). Deliberately not extended to infinitival-complement verbs 
+# The complementizer introducing a finite clausal complement ("John thinks THAT Mary is home"). Deliberately not extended to infinitival-complement verbs
 # ("want to leave"): that's a genuinely different construction (an infinitive "to" + bare verb, not a finite embedded sentence) and isn't attempted here.
 COMPLEMENTIZER_WORDS = {"that"}
 
+# Coordinators, each mapped to the closed logical connective it represents. Ordinary CCG coordination needs a category variable ("X and X -> X" for any
+# X), which the category algebra above deliberately doesn't support: see ChartParser._run_chart's dedicated coordination pass for how this closed,
+# narrower mechanism (same concrete category on both sides of the coordinator) covers "John left and Mary left" / "the suitcase or the trophy" without it.
+COORDINATORS: Dict[str, str] = {"and": "AND", "or": "OR"}
+
 _DETERMINER_LIKE = set(QUANTIFIERS) | DETERMINERS
 _PREDICATE_MODIFIER_WORDS = COPULA_PRESENT | COPULA_PAST | NEGATION_WORDS | FUTURE_MARKERS | PAST_AUX
-_FUNCTION_WORDS = _DETERMINER_LIKE | _PREDICATE_MODIFIER_WORDS | COMPARISON_MARKERS | FOCUS_PARTICLES | SUBORDINATORS | COMPLEMENTIZER_WORDS
+_FUNCTION_WORDS = _DETERMINER_LIKE | _PREDICATE_MODIFIER_WORDS | COMPARISON_MARKERS | FOCUS_PARTICLES | SUBORDINATORS | COMPLEMENTIZER_WORDS | set(COORDINATORS)
 
 # Pronouns are closed-class function words syntactically (the same status as determiners or negation) so their category and agreement features come 
 # from this fixed table, never from a lexicon.json entry. (An earlier design routed them through the ordinary lexicon, which required giving them a 
@@ -223,6 +241,29 @@ def get_pronoun_features(word: str) -> Optional[Dict]:
     Returns the closed agreement-feature record for a pronoun, or None if `word` isn't one.
     """
     return PRONOUNS.get(word.lower())
+
+def get_coordination_conjuncts(root: Optional[DerivationNode]) -> Optional[Tuple[DerivationNode, DerivationNode]]:
+    """
+    If `root` was built by the coordination pass in ChartParser._run_chart, returns its (left_conjunct, right_conjunct) subtrees; None otherwise. This
+    is a purely structural check (no special label marker needed on the node itself) precisely because a coordination node's arity (exactly three
+    children, with the middle one a coordinator leaf) never arises any other way in this grammar: every other combinator in _COMBINATOR_RULES always
+    builds a 2-child node. Used both by parse_with_derivation (to extract each conjunct as its own LogicalForm) and by core/pipeline.py (to resolve
+    pronouns/cataphora independently within each conjunct's own subtree, never across them: see that file's own docstring for why crossing conjuncts
+    would be wrong).
+    """
+    if root is None or len(root.children) != 3 or not root.children[1].is_leaf() or root.children[1].token not in COORDINATORS:
+        return None
+    return (root.children[0], root.children[2])
+
+def get_coordinator_connective(root: Optional[DerivationNode]) -> Optional[str]:
+    """
+    If `root` is a top-level coordination node (see get_coordination_conjuncts), returns which closed logical connective ("AND"/"OR") its coordinator
+    word represents; None otherwise. Lets core/pipeline.py combine a coordinated sentence's per-conjunct truth values correctly without needing to know
+    anything about DerivationNode structure itself.
+    """
+    if root is None or len(root.children) != 3 or not root.children[1].is_leaf():
+        return None
+    return COORDINATORS.get(root.children[1].token)
 
 # Negative polarity items and the closed set of words allowed to license them (Ladusaw/Fauconnier downward-entailment licensing): "I didn't see anyone" is fine, 
 # "*I saw anyone" is not, because nothing negative structurally sits above "anyone" in the second sentence.
@@ -290,6 +331,11 @@ def supertag_function_word(word: str) -> List[CCGCategory]:
         return [ADJUNCT_TAKING, TRAILING_ADJUNCT_TAKING]
     if word in COMPLEMENTIZER_WORDS:
         return [COMPLEMENTIZER]
+    if word in COORDINATORS:
+        # Tagged, but only so _supertag_all doesn't reject the sentence as containing an unrecognized word: COORD_ATOM is inert under every ordinary
+        # combinator (see its own definition above), so this candidate category never actually gets used by the standard application/composition search;
+        # the coordinator is consumed entirely by _run_chart's dedicated ternary coordination pass instead.
+        return [COORD_ATOM]
 
     return []
 
@@ -374,7 +420,7 @@ class ChartParser:
         raw_words = [word.strip(",;:").lower() for word in clean_sentence.split()]
         return [word for word in raw_words if word]
 
-    def parse(self, sentence: str) -> Optional[LogicalForm]:
+    def parse(self, sentence: str) -> Optional[Union[LogicalForm, List[LogicalForm]]]:
         """
         Parses a sentence end to end and returns just its LogicalForm: the entry point every existing caller and test uses. See parse_with_derivation() for the 
         variant that also returns the derivation tree itself, needed by later layers (core/discourse.py's cataphora resolution) that need real sentence structure, 
@@ -383,10 +429,16 @@ class ChartParser:
         logical_form, _root = self.parse_with_derivation(sentence)
         return logical_form
 
-    def parse_with_derivation(self, sentence: str) -> Tuple[Optional[LogicalForm], Optional[DerivationNode]]:
+    def parse_with_derivation(self, sentence: str) -> Tuple[Optional[Union[LogicalForm, List[LogicalForm]]], Optional[DerivationNode]]:
         """
-        Same end-to-end process as parse(), but also returns the winning derivation tree rather than discarding it. Returns (None, None) if the sentence contains a word 
+        Same end-to-end process as parse(), but also returns the winning derivation tree rather than discarding it. Returns (None, None) if the sentence contains a word
         the lexicon can't find at all, if no combination of categories produces a complete sentence, or if an NPI licensing check fails.
+
+        Returns a List[LogicalForm] instead of a single LogicalForm when the whole sentence is itself a coordinated pair ("John left and Mary left"):
+        each conjunct is extracted independently (its own predicate, arguments, negation, tense: see _extract_logical_form), and core/pipeline.py is
+        what actually evaluates and combines them via the coordinator's connective. Coordination NESTED inside a clause ("the suitcase or the trophy is
+        heavy") is not specially detected here: the coordinated NP's two nouns simply both survive as ordinary flat arguments of that clause's single
+        LogicalForm, the same honest flat-extraction limitation already documented on _extract_logical_form itself.
         """
         tokens = self.tokenize(sentence)
         if not tokens:
@@ -403,6 +455,11 @@ class ChartParser:
         npi_violations = check_npi_licensing(root)
         if npi_violations:
             return None, None
+
+        conjunct_trees = get_coordination_conjuncts(root)
+        if conjunct_trees is not None:
+            conjuncts = [self._extract_logical_form(tree) for tree in conjunct_trees]
+            return conjuncts, root
 
         return self._extract_logical_form(root), root
 
@@ -458,6 +515,31 @@ class ChartParser:
                                     span = (i, j),
                                 )
                                 cell.append((result, node, left_rank + right_rank + penalty))
+
+                # Coordination: a third, deliberately narrow combination mechanism alongside application/composition above, not a general CCG
+                # coordination rule (which would need a category variable the algebra doesn't support: see COORDINATORS' own docstring). For a
+                # coordinator token sitting at some position strictly between i and j, if the span to its left and the span to its right each already
+                # produced the SAME concrete category, that category is also a valid result for the whole span: exactly enough to parse
+                # "John left and Mary left" / "the suitcase or the trophy" without touching the category algebra itself.
+                for coord_pos in range(i + 1, j - 1):
+                    if tokens[coord_pos] not in COORDINATORS:
+                        continue
+
+                    left_conjunct_cell = chart[(i, coord_pos)]
+                    right_conjunct_cell = chart[(coord_pos + 1, j)]
+                    coordinator_leaf = DerivationNode(label = repr(COORD_ATOM), token = tokens[coord_pos], span = (coord_pos, coord_pos + 1))
+
+                    for left_category, left_node, left_rank in left_conjunct_cell:
+                        for right_category, right_node, right_rank in right_conjunct_cell:
+                            if left_category != right_category:
+                                continue
+
+                            node = DerivationNode(
+                                label = repr(left_category),
+                                children = (left_node, coordinator_leaf, right_node),
+                                span = (i, j),
+                            )
+                            cell.append((left_category, node, left_rank + right_rank + _COORDINATION_PENALTY))
 
                 chart[(i, j)] = cell
 
