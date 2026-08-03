@@ -7,7 +7,7 @@ import os
 import shutil
 
 from core.lexicon import LexiconManager
-from core.types import DerivationNode
+from core.types import DerivationNode, Gender, GrammaticalNumber
 from core.parser import (
     CCGCategory,
     S, NP, N,
@@ -18,12 +18,36 @@ from core.parser import (
     try_forward_composition, try_backward_composition,
     type_raise,
     supertag_content_word, supertag_function_word,
+    get_pronoun_features,
     find_parent, c_commands, collect_leaves, check_npi_licensing,
     ChartParser,
 )
 
-class TestCCGCategoryAlgebra(unittest.TestCase):
+class TestPronounFeatures(unittest.TestCase):
+    def test_it_is_singular_inanimate_no_gender(self):
+        features = get_pronoun_features("it")
+        self.assertIsNone(features["gender"])
+        self.assertEqual(features["number"], GrammaticalNumber.SINGULAR)
+        self.assertFalse(features["animate"])
 
+    def test_he_is_masculine_animate(self):
+        features = get_pronoun_features("he")
+        self.assertEqual(features["gender"], Gender.MASCULINE)
+        self.assertTrue(features["animate"])
+
+    def test_they_is_plural_with_no_fixed_gender_or_animacy(self):
+        features = get_pronoun_features("they")
+        self.assertEqual(features["number"], GrammaticalNumber.PLURAL)
+        self.assertIsNone(features["gender"])
+        self.assertIsNone(features["animate"])
+
+    def test_non_pronoun_returns_none(self):
+        self.assertIsNone(get_pronoun_features("suitcase"))
+
+    def test_pronoun_gets_np_category(self):
+        self.assertEqual(supertag_function_word("it"), [NP])
+
+class TestCCGCategoryAlgebra(unittest.TestCase):
     def test_atomic_repr(self):
         self.assertEqual(repr(S), "S")
         self.assertEqual(repr(NP), "NP")
@@ -45,7 +69,6 @@ class TestCCGCategoryAlgebra(unittest.TestCase):
         self.assertFalse(INTRANSITIVE_VERB.is_atomic())
 
 class TestCombinators(unittest.TestCase):
-
     def test_forward_application(self):
         # "the"(NP/N) + "suitcase"(N) -> NP.
         self.assertEqual(try_forward_application(DETERMINER, N), NP)
@@ -257,6 +280,24 @@ class TestChartParserEndToEnd(unittest.TestCase):
         # "kicked" is not its own lexicon entry: the lexicon's own inflection handling (core/lexicon.py) resolves it to "kick", and the parser never needs to know that happened.
         form = self.parser.parse("John kicked the ball.")
         self.assertIsNotNone(form)
+
+    def test_pronoun_parses_as_an_unresolved_argument(self):
+        # Resolving what "it" refers to is core/discourse.py's job - the parser's job stops at
+        # producing a syntactically valid sentence with the pronoun as a literal argument.
+        form = self.parser.parse("It is portable.")
+        self.assertEqual(form.predicate, "PORTABLE")
+        self.assertEqual(form.arguments, ["it"])
+
+    def test_parse_with_derivation_exposes_the_tree(self):
+        form, root = self.parser.parse_with_derivation("The suitcase is portable.")
+        self.assertIsNotNone(form)
+        self.assertIsNotNone(root)
+        self.assertEqual(root.label, "S")
+
+    def test_parse_with_derivation_returns_none_none_on_failure(self):
+        form, root = self.parser.parse_with_derivation("Quantum mechanics is weird")
+        self.assertIsNone(form)
+        self.assertIsNone(root)
 
 if __name__ == "__main__":
     unittest.main()

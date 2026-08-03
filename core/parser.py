@@ -34,7 +34,7 @@ that consume this file's output.
 
 from typing import List, Dict, Optional, Tuple, Any
 
-from core.types import LogicalForm, DerivationNode
+from core.types import LogicalForm, DerivationNode, Gender, GrammaticalNumber
 
 # Categories: the "jigsaw-puzzle piece shapes" words get tagged with.
 class CCGCategory:
@@ -178,6 +178,27 @@ _DETERMINER_LIKE = set(QUANTIFIERS) | DETERMINERS
 _PREDICATE_MODIFIER_WORDS = COPULA_PRESENT | COPULA_PAST | NEGATION_WORDS | FUTURE_MARKERS | PAST_AUX
 _FUNCTION_WORDS = _DETERMINER_LIKE | _PREDICATE_MODIFIER_WORDS | COMPARISON_MARKERS | FOCUS_PARTICLES
 
+# Pronouns are closed-class function words syntactically (the same status as determiners or negation) so their category and agreement features come 
+# from this fixed table, never from a lexicon.json entry. (An earlier design routed them through the ordinary lexicon, which required giving them a 
+# primitive decomposition; "PRONOUN" was never a real NSM primitive, so "it"/"they" were silently rejected by core/lexicon.py's closure validation the 
+# moment that validation went in: pronouns were unparseable until this table replaced that approach.) Deliberately NOT part of _FUNCTION_WORDS above: 
+# unlike determiners, a pronoun IS the argument core/discourse.py needs to resolve later, so it must survive extraction rather than being filtered out as noise.
+PRONOUNS: Dict[str, Dict] = {
+    "it": {"gender": None, "number": GrammaticalNumber.SINGULAR, "animate": False},
+    "he": {"gender": Gender.MASCULINE, "number": GrammaticalNumber.SINGULAR, "animate": True},
+    "him": {"gender": Gender.MASCULINE, "number": GrammaticalNumber.SINGULAR, "animate": True},
+    "she": {"gender": Gender.FEMININE, "number": GrammaticalNumber.SINGULAR, "animate": True},
+    "her": {"gender": Gender.FEMININE, "number": GrammaticalNumber.SINGULAR, "animate": True},
+    "they": {"gender": None, "number": GrammaticalNumber.PLURAL, "animate": None},
+    "them": {"gender": None, "number": GrammaticalNumber.PLURAL, "animate": None},
+}
+
+def get_pronoun_features(word: str) -> Optional[Dict]:
+    """
+    Returns the closed agreement-feature record for a pronoun, or None if `word` isn't one.
+    """
+    return PRONOUNS.get(word.lower())
+
 # Negative polarity items and the closed set of words allowed to license them (Ladusaw/Fauconnier downward-entailment licensing): "I didn't see anyone" is fine, 
 # "*I saw anyone" is not, because nothing negative structurally sits above "anyone" in the second sentence.
 NPI_WORDS = {"any", "anyone", "anything", "ever", "at_all"}
@@ -233,7 +254,9 @@ def supertag_function_word(word: str) -> List[CCGCategory]:
         return [PREDICATE_MODIFIER]
     if word in NPI_WORDS:
         return [PREDICATE_MODIFIER] if word in ("ever", "at_all") else [NP]
-    
+    if word in PRONOUNS:
+        return [NP]
+
     return []
 
 # Derivation-tree utilities: c-command, built directly on DerivationNode.dominates().
@@ -317,27 +340,35 @@ class ChartParser:
 
     def parse(self, sentence: str) -> Optional[LogicalForm]:
         """
-        Parses a sentence end to end: tokenize, look up each word's candidate categories, fill the chart, and (if some derivation spans the whole sentence as a complete S) extract a
-        LogicalForm from the best one. Returns None if the sentence contains a word the lexicon can't find at all, if no combination of categories produces a complete sentence, or if an
-        NPI licensing check fails.
+        Parses a sentence end to end and returns just its LogicalForm: the entry point every existing caller and test uses. See parse_with_derivation() for the 
+        variant that also returns the derivation tree itself, needed by later layers (core/discourse.py's cataphora resolution) that need real sentence structure, 
+        not just the extracted result.
+        """
+        logical_form, _root = self.parse_with_derivation(sentence)
+        return logical_form
+
+    def parse_with_derivation(self, sentence: str) -> Tuple[Optional[LogicalForm], Optional[DerivationNode]]:
+        """
+        Same end-to-end process as parse(), but also returns the winning derivation tree rather than discarding it. Returns (None, None) if the sentence contains a word 
+        the lexicon can't find at all, if no combination of categories produces a complete sentence, or if an NPI licensing check fails.
         """
         tokens = self.tokenize(sentence)
         if not tokens:
-            return None
+            return None, None
 
         cell_options = self._supertag_all(tokens)
         if cell_options is None:
-            return None # An unrecognized word was encountered.
+            return None, None # An unrecognized word was encountered.
 
         root = self._run_chart(tokens, cell_options)
         if root is None:
-            return None
+            return None, None
 
         npi_violations = check_npi_licensing(root)
         if npi_violations:
-            return None
+            return None, None
 
-        return self._extract_logical_form(tokens, root)
+        return self._extract_logical_form(tokens, root), root
 
     def _supertag_all(self, tokens: List[str]) -> Optional[List[List[CCGCategory]]]:
         """
