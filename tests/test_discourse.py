@@ -100,14 +100,23 @@ class TestCataphoraResolution(unittest.TestCase):
         self.assertIsNone(result) # John precedes he: ordinary backward anaphora's job, not this function's.
 
     def test_find_pronoun_and_name_leaves_splits_correctly(self):
+        # Tokens are lowercase here deliberately: this is what core/parser.py's real tokenizer actually produces (it lowercases everything for lexicon-lookup consistency), 
+        # so name detection has to work from the lexicon's own category tag, not surface capitalization.
+        class _FakeLexicon:
+            def get_word_definition(self, word):
+                if word == "john":
+                    return {"category": "proper_noun"}
+                
+                return None
+
         he = DerivationNode(label = "NP", token = "he", span = (0, 1))
-        john = DerivationNode(label = "NP", token = "John", span = (1, 2))
+        john = DerivationNode(label = "NP", token = "john", span = (1, 2))
         room = DerivationNode(label = "NP", token = "room", span = (2, 3))
         root = DerivationNode(label = "S", children = (he, DerivationNode(label = "X", children = (john, room), span = (1, 3))), span = (0, 3))
 
-        pronouns, names = find_pronoun_and_name_leaves(root, {"he", "it", "they"})
+        pronouns, names = find_pronoun_and_name_leaves(root, {"he", "it", "they"}, _FakeLexicon())
         self.assertEqual([p.token for p in pronouns], ["he"])
-        self.assertEqual([n.token for n in names], ["John"])
+        self.assertEqual([n.token for n in names], ["john"])
 
 class TestSpeechActClassification(unittest.TestCase):
     def test_greeting_is_expressive(self):

@@ -77,9 +77,10 @@ class DEMESPipeline:
 
         logical_form, derivation_tree = self.parser.parse_with_derivation(raw_text)
 
+        cataphora_resolutions: List[Dict[str, str]] = []
         if logical_form:
             self._register_noun_arguments(logical_form)
-            self._resolve_pronoun_arguments(logical_form, derivation_tree)
+            cataphora_resolutions = self._resolve_pronoun_arguments(logical_form, derivation_tree)
 
         accommodated_presuppositions = self._check_presuppositions(tokens, logical_form)
         word_senses = self._disambiguate_utterance(tokens)
@@ -102,6 +103,7 @@ class DEMESPipeline:
             "implicatures": implicatures,
             "accommodated_presuppositions": accommodated_presuppositions,
             "focus": focused_constituent,
+            "cataphora_resolutions": cataphora_resolutions,
         }
 
     # Discourse referents and pronoun resolution.
@@ -120,19 +122,26 @@ class DEMESPipeline:
                 if str(argument) in logical_form.plural_arguments:
                     self.world_model.register_entity(str(argument), kind = str(argument), is_sum = True)
 
-    def _resolve_pronoun_arguments(self, logical_form, derivation_tree) -> None:
+    def _resolve_pronoun_arguments(self, logical_form, derivation_tree) -> List[Dict[str, str]]:
         """
-        Resolves every pronoun argument in place. Cataphora (a pronoun referring to a name later in the same sentence) is tried first against 
-        the retained derivation tree, since it's the more specific, structurally-licensed case; ordinary backward resolution against the world
-        model's active referents is the fallback for everything else.
+        Resolves every pronoun found anywhere in the derivation tree, and returns the list of cataphoric resolutions actually made. This has to 
+        look at the whole tree, not just logical_form.arguments: a pronoun inside a fronted adjunct clause ("Before HE entered the room, JOHN left") 
+        is never part of the matrix clause's own arguments at all (see core/parser.py's _matrix_clause_root: the adjunct's content is deliberately kept out of
+        the matrix LogicalForm), so a resolution for it can't be recorded by rewriting logical_form.arguments the way an ordinary in-clause pronoun's resolution is. 
+        Returning the resolutions explicitly is what makes that outcome visible instead of silently computed and discarded. Cataphora is tried first 
+        (the more specific, structurally-licensed case); ordinary backward resolution against the world model's active referents is the fallback for whichever pronoun 
+        arguments cataphora didn't already resolve.
         """
+        resolutions: List[Dict[str, str]] = []
+
         if derivation_tree is not None:
-            pronoun_leaves, name_leaves = find_pronoun_and_name_leaves(derivation_tree, _PRONOUN_TOKENS)
+            pronoun_leaves, name_leaves = find_pronoun_and_name_leaves(derivation_tree, _PRONOUN_TOKENS, self.lexicon)
             for pronoun_leaf in pronoun_leaves:
                 later_names = [leaf for leaf in name_leaves if leaf.span[0] > pronoun_leaf.span[0]]
                 resolved = attempt_cataphora_resolution(derivation_tree, pronoun_leaf, later_names)
-                
+
                 if resolved is not None:
+                    resolutions.append({"pronoun": pronoun_leaf.token, "resolved_to": resolved.token})
                     logical_form.arguments = [
                         resolved.token if argument == pronoun_leaf.token else argument
                         for argument in logical_form.arguments
@@ -142,6 +151,7 @@ class DEMESPipeline:
             self._resolve_single_pronoun(str(argument)) if str(argument).lower() in _PRONOUN_TOKENS else argument
             for argument in logical_form.arguments
         ]
+        return resolutions
 
     def _resolve_single_pronoun(self, pronoun_text: str) -> str:
         features = get_pronoun_features(pronoun_text) or {}

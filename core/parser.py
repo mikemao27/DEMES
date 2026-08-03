@@ -88,6 +88,15 @@ COMPARATIVE_ATTRIBUTIVE = CCGCategory(ATTRIBUTIVE_ADJECTIVE, PP, "/") # (N/N)/PP
 DETERMINER = CCGCategory(NP, N, "/") # NP/N.
 PREDICATE_MODIFIER = CCGCategory(PREDICATIVE_ADJECTIVE, PREDICATIVE_ADJECTIVE, "/") # (S\NP)/(S\NP): copula, negation, tense auxiliaries.
 COMPARISON_PP = CCGCategory(PP, NP, "/") # PP/NP: "than".
+SENTENCE_MODIFIER = CCGCategory(S, S, "/") # S/S: something that turns one following sentence into another, e.g. a FRONTED adjunct clause ("Before X, Y").
+
+# A TRAILING adjunct ("Y before X") attaches at the VP level, (S\NP)\(S\NP): not S\S. This matters for more than tidiness: attaching at the whole-sentence 
+# level would place the adjunct structurally OUTSIDE the subject's c-command domain, which gets Principle C backwards: a trailing adjunct is standardly a VP-adjunct, 
+# and the subject genuinely does c-command into it (that's exactly why "*He arrived before John did" is bad for intended coreference, unlike the fronted "Before he arrived, John left"). 
+# Attaching at the VP means the subject and the adjunct both end up under the same S node once the subject combines, giving c-command tests the right geometry to work with.
+TRAILING_VP_MODIFIER = CCGCategory(INTRANSITIVE_VERB, INTRANSITIVE_VERB, "\\") # (S\NP)\(S\NP).
+ADJUNCT_TAKING = CCGCategory(SENTENCE_MODIFIER, S, "/") # (S/S)/S: a subordinator like "before" in fronted position, consuming its own clause first.
+TRAILING_ADJUNCT_TAKING = CCGCategory(TRAILING_VP_MODIFIER, S, "/") # ((S\NP)\(S\NP))/S: the same subordinator in trailing position.
 
 # Combinators: the small, fixed set of rules for combining two adjacent categories.
 def try_forward_application(left: CCGCategory, right: CCGCategory) -> Optional[CCGCategory]:
@@ -148,11 +157,17 @@ def type_raise(category: CCGCategory, result_type: CCGCategory) -> CCGCategory:
     inner = CCGCategory(result_type, category, "\\")
     return CCGCategory(result_type, inner, "/")
 
-_COMBINATOR_RULES: Tuple[Tuple[str, Any], ...] = (
-    (">", try_forward_application),
-    ("<", try_backward_application),
-    (">B", try_forward_composition),
-    ("<B", try_backward_composition),
+_APPLICATION_PENALTY = 0
+# CCG's well-known "spurious ambiguity": composition can derive the same span via a structurally different path than plain application would, even 
+# when application alone already succeeds (e.g. an adjunct clause composing into the middle of a verb phrase instead of attaching to the finished sentence). 
+# Penalizing composition relative to application is the standard fix: it doesn't disable composition (still explored, and still wins when it's the only way to succeed), 
+# it just means a plain-application derivation is preferred over a composition-based one whenever the chart actually has a choice between two derivations of the same category.
+_COMPOSITION_PENALTY = 1
+_COMBINATOR_RULES: Tuple[Tuple[str, Any, int], ...] = (
+    (">", try_forward_application, _APPLICATION_PENALTY),
+    ("<", try_backward_application, _APPLICATION_PENALTY),
+    (">B", try_forward_composition, _COMPOSITION_PENALTY),
+    ("<B", try_backward_composition, _COMPOSITION_PENALTY),
 )
 
 # Closed function-word tables. Same role as an ordinary category assignment, but for words whose job is purely grammatical rather than being a lexicon 
@@ -174,9 +189,13 @@ PAST_AUX = {"did"}
 COMPARISON_MARKERS = {"than"}
 FOCUS_PARTICLES = {"only", "even"}
 
+# Subordinating conjunctions introducing an adjunct clause ("Before he entered the room, ..."). A closed set, same discipline as every other function-word table 
+# here: not an attempt to cover every English subordinator, just the ones needed to make adjunct clauses parseable at all.
+SUBORDINATORS = {"before", "after", "while", "when"}
+
 _DETERMINER_LIKE = set(QUANTIFIERS) | DETERMINERS
 _PREDICATE_MODIFIER_WORDS = COPULA_PRESENT | COPULA_PAST | NEGATION_WORDS | FUTURE_MARKERS | PAST_AUX
-_FUNCTION_WORDS = _DETERMINER_LIKE | _PREDICATE_MODIFIER_WORDS | COMPARISON_MARKERS | FOCUS_PARTICLES
+_FUNCTION_WORDS = _DETERMINER_LIKE | _PREDICATE_MODIFIER_WORDS | COMPARISON_MARKERS | FOCUS_PARTICLES | SUBORDINATORS
 
 # Pronouns are closed-class function words syntactically (the same status as determiners or negation) so their category and agreement features come 
 # from this fixed table, never from a lexicon.json entry. (An earlier design routed them through the ordinary lexicon, which required giving them a 
@@ -256,6 +275,10 @@ def supertag_function_word(word: str) -> List[CCGCategory]:
         return [PREDICATE_MODIFIER] if word in ("ever", "at_all") else [NP]
     if word in PRONOUNS:
         return [NP]
+    if word in SUBORDINATORS:
+        # Both orders are offered as candidates ("Before X, Y" and "Y before X"): which one actually combines into a complete S is left for the chart to discover, the same way
+        # an adjective's predicative-vs-attributive reading is.
+        return [ADJUNCT_TAKING, TRAILING_ADJUNCT_TAKING]
 
     return []
 
@@ -333,10 +356,12 @@ class ChartParser:
 
     def tokenize(self, sentence: str) -> List[str]:
         """
-        Splits a clean sentence into lowercase words, stripping leading/trailing punctuation.
+        Splits a clean sentence into lowercase words, stripping punctuation from both the whole sentence's ends and from each individual word: the latter matters as of 
+        adjunct clauses, which routinely have an internal comma boundary ("Before X, Y") that would otherwise glue onto the following word as if it were part of it.
         """
         clean_sentence = sentence.strip("?.!")
-        return [word.lower() for word in clean_sentence.split()]
+        raw_words = [word.strip(",;:").lower() for word in clean_sentence.split()]
+        return [word for word in raw_words if word]
 
     def parse(self, sentence: str) -> Optional[LogicalForm]:
         """
@@ -368,7 +393,7 @@ class ChartParser:
         if npi_violations:
             return None, None
 
-        return self._extract_logical_form(tokens, root), root
+        return self._extract_logical_form(root), root
 
     def _supertag_all(self, tokens: List[str]) -> Optional[List[List[CCGCategory]]]:
         """
@@ -410,7 +435,7 @@ class ChartParser:
                 for k in range(i + 1, j):
                     for left_category, left_node, left_rank in chart[(i, k)]:
                         for right_category, right_node, right_rank in chart[(k, j)]:
-                            for _name, rule in _COMBINATOR_RULES:
+                            for _name, rule, penalty in _COMBINATOR_RULES:
                                 result = rule(left_category, right_category)
 
                                 if result is None:
@@ -421,7 +446,7 @@ class ChartParser:
                                     children = (left_node, right_node),
                                     span = (i, j),
                                 )
-                                cell.append((result, node, left_rank + right_rank))
+                                cell.append((result, node, left_rank + right_rank + penalty))
 
                 chart[(i, j)] = cell
 
@@ -433,15 +458,16 @@ class ChartParser:
         sentence_derivations.sort(key =lambda pair: pair[1])
         return sentence_derivations[0][0]
 
-    def _extract_logical_form(self, tokens: List[str], root: DerivationNode) -> LogicalForm:
+    def _extract_logical_form(self, root: DerivationNode) -> LogicalForm:
         """
         Reads a LogicalForm off a completed derivation tree. This is a deliberately simple extraction (find the predicate, find the arguments, note negation/tense/quantification)
         not full compositional semantics; real beta-reduction over the tree's structure is core/semantics.py's job. What this step gets right, thanks to having a real tree instead
         of a flat token list: an attributive adjective (tagged N/N in the winning derivation) is never mistaken for the sentence's predicate ("the heavy suitcase is portable" correctly
-        identifies "portable" alone as the predicate, not "heavy"), and quantifiers are found by walking the tree rather than checking only whether the sentence starts with one: which
-        is what makes more than one quantifier per sentence ("every student read a book") representable at all, instead of only ever picking up the first.
+        identifies "portable" alone as the predicate, not "heavy"), quantifiers are found by walking the tree rather than checking only whether the sentence starts with one (what makes
+        more than one quantifier per sentence representable at all), and (as of adjunct clauses) a fronted adjunct's own words never leak into the matrix clause's predicate or
+        arguments, because extraction runs over the matrix clause's own subtree specifically, not the whole tree's flattened leaves.
         """
-        leaves = collect_leaves(root)
+        leaves = self._matrix_clause_leaves(root)
         is_negated = any(leaf.token in NEGATION_WORDS for leaf in leaves)
         tense = self._detect_tense(leaves)
 
@@ -489,6 +515,30 @@ class ChartParser:
             form.predicate = f"IDIOM:{predicate_lemma}_{idiom_object}"
 
         return form
+
+    def _matrix_clause_leaves(self, root: DerivationNode) -> List[DerivationNode]:
+        """
+        Returns every leaf in the tree EXCEPT those belonging to an adjunct clause: fronted ("Before he entered the room, John left") or trailing ("John left before he entered the
+        room"). This walks the whole tree looking for a completed adjunct-phrase node (labeled as either SENTENCE_MODIFIER, "(S/S)", for the fronted case, or TRAILING_VP_MODIFIER,
+        "((S\\NP)\\(S\\NP))", for the trailing one: see those categories' own definitions above for why the trailing case attaches at the VP rather than the whole sentence) and excludes
+        every leaf under it, rather than only checking specific fixed tree positions. That generality matters: it means adjunct exclusion keeps working correctly regardless of
+        exactly where composition or a particular combinator sequence ends up attaching the adjunct, rather than only for one specific expected tree shape. The adjunct clause's own
+        content is still part of the FULL tree parse_with_derivation returns (needed whole for structural checks like cataphora's c-command test): only extraction excludes it.
+        """
+        adjunct_labels = (repr(SENTENCE_MODIFIER), repr(TRAILING_VP_MODIFIER))
+        excluded_leaf_ids = set()
+
+        def _mark_excluded(node: DerivationNode) -> None:
+            if node.label in adjunct_labels:
+                for leaf in collect_leaves(node):
+                    excluded_leaf_ids.add(id(leaf))
+                return # The whole adjunct phrase is excluded: no need to look inside it further.
+            
+            for child in node.children:
+                _mark_excluded(child)
+
+        _mark_excluded(root)
+        return [leaf for leaf in collect_leaves(root) if id(leaf) not in excluded_leaf_ids]
 
     def _collect_stored_quantifiers(self, root: DerivationNode, leaves: List[DerivationNode]) -> List[StoredQuantifier]:
         """

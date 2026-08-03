@@ -223,7 +223,7 @@ class EventRecord:
     progressive, but only one of them can be coerced by "started".
     """
     predicate: str
-    roles: Dict[str, str] = field(default_factor = dict)
+    roles: Dict[str, str] = field(default_factory = dict)
     speech_time: int = 0
     reference_time: int = 0
     event_time: int = 0

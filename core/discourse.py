@@ -33,7 +33,7 @@ for when parser coverage catches up, not silently assumed to already be wired in
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.types import (
     DerivationNode, Gender, GrammaticalNumber, DiscourseReferent, LogicalForm, Aktionsart, FrameTemplate,
@@ -86,14 +86,23 @@ def attempt_cataphora_resolution(
         
     return None
 
-def find_pronoun_and_name_leaves(root: DerivationNode, pronoun_tokens: set) -> Tuple[List[DerivationNode], List[DerivationNode]]:
+def find_pronoun_and_name_leaves(root: DerivationNode, pronoun_tokens: set, lexicon: Any) -> Tuple[List[DerivationNode], List[DerivationNode]]:
     """
-    Scans a derivation tree's leaves and splits them into pronoun leaves (tokens in `pronoun_tokens`) and capitalized-name leaves (a simple, honest proper-noun heuristic: real
-    proper-noun identification is core/lexicon.py's mint_proper_noun, which needs the original-case surface form; this file only sees whatever case the leaf's token happens to carry).
+    Scans a derivation tree's leaves and splits them into pronoun leaves (tokens in `pronoun_tokens`) and proper-noun leaves. Name leaves are identified by the lexicon's own
+    "proper_noun" category tag, not surface capitalization: core/parser.py's tokenizer lowercases every token before a leaf is ever built (needed so lexicon lookups are case-consistent), 
+    so by the time a tree reaches this function, capitalization has already been destroyed; checking the lexicon category is both more reliable and doesn't depend on casing surviving at all.
     """
     leaves = collect_leaves(root)
     pronouns = [leaf for leaf in leaves if leaf.token and leaf.token.lower() in pronoun_tokens]
-    names = [leaf for leaf in leaves if leaf.token and leaf.token[:1].isupper()]
+    names = []
+    for leaf in leaves:
+        if not leaf.token:
+            continue
+        
+        entry = lexicon.get_word_definition(leaf.token)
+        if entry and entry.get("category") == "proper_noun":
+            names.append(leaf)
+
     return pronouns, names
 
 # Speech acts: Searle's five-category taxonomy.

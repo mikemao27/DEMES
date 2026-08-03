@@ -92,6 +92,29 @@ class TestNounRegistrationAndPronounResolution(TestPipelineBase):
         self.pipeline.process_utterance("The suitcase is portable.")
         self.assertNotIn("suitcase", self.pipeline.world_model.entities)
 
+class TestCataphoraIntegration(TestPipelineBase):
+    """
+    The whole point of Phase 2.2: cataphora resolution (core/discourse.py, built and tested against hand-built trees several files ago) actually reachable 
+    from a real, live parse now that adjunct clauses exist. "Before he entered the room, John walked" is grammatical for the intended coreference 
+    (the pronoun doesn't c-command the name); "John walked before he entered the room" is not (it does): the same licensed/blocked pair Principle C predicts.
+    """
+    def setUp(self):
+        super().setUp()
+        self.pipeline.lexicon.lexicon["enter"] = {"category": "verb", "semantic_type": "<e,<e,t>>", "primitives": [{"name": "MOVE", "category": "action"}], "valency": "transitive"}
+        self.pipeline.lexicon.lexicon["room"] = {"category": "noun", "semantic_type": "e", "primitives": [{"name": "SOMETHING", "category": "entity"}], "valency": "none"}
+
+    def test_fronted_adjunct_licenses_cataphora(self):
+        result = self.pipeline.process_utterance("Before he entered the room, John walked.")
+        self.assertEqual(result["logical_form"].arguments, ["john"])
+        self.assertEqual(result["cataphora_resolutions"], [{"pronoun": "he", "resolved_to": "john"}])
+
+    def test_trailing_adjunct_blocks_cataphora(self):
+        # "He" is the matrix subject here and structurally c-commands "John" inside the trailing adjunct, so forward reference is blocked: unlike the fronted case above, 
+        # where the pronoun sits inside the (non-c-commanding) adjunct instead.
+        result = self.pipeline.process_utterance("He walked before John entered the room.")
+        self.assertEqual(result["logical_form"].arguments, ["he"])
+        self.assertEqual(result["cataphora_resolutions"], [])
+
 class TestMultiQuantifierIntegration(TestPipelineBase):
     def setUp(self):
         super().setUp()

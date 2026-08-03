@@ -213,6 +213,9 @@ class TestChartParserEndToEnd(unittest.TestCase):
         self.lexicon.lexicon["student"] = {"category": "noun", "semantic_type": "e", "primitives": [{"name": "PEOPLE", "category": "entity"}], "valency": "none"}
         self.lexicon.lexicon["book"] = {"category": "noun", "semantic_type": "e", "primitives": [{"name": "SOMETHING", "category": "entity"}], "valency": "none"}
         self.lexicon.lexicon["read"] = {"category": "verb", "semantic_type": "<e,<e,t>>", "primitives": [{"name": "SEE", "category": "action"}], "valency": "transitive"}
+        self.lexicon.lexicon["enter"] = {"category": "verb", "semantic_type": "<e,<e,t>>", "primitives": [{"name": "MOVE", "category": "action"}], "valency": "transitive"}
+        self.lexicon.lexicon["room"] = {"category": "noun", "semantic_type": "e", "primitives": [{"name": "SOMETHING", "category": "entity"}], "valency": "none"}
+        self.lexicon.lexicon["walk"] = {"category": "verb", "semantic_type": "<e,t>", "primitives": [{"name": "MOVE", "category": "action"}], "valency": "intransitive"}
 
         self.parser = ChartParser(self.lexicon)
 
@@ -276,6 +279,22 @@ class TestChartParserEndToEnd(unittest.TestCase):
     def test_singular_noun_is_not_tagged_plural(self):
         form = self.parser.parse("The suitcase is portable.")
         self.assertEqual(form.plural_arguments, [])
+
+    def test_fronted_adjunct_clause_extracts_only_the_matrix_clause(self):
+        form = self.parser.parse("Before he entered the room, John walked.")
+        self.assertEqual(form.predicate, "WALKED")
+        self.assertEqual(form.arguments, ["john"])
+
+    def test_trailing_adjunct_clause_extracts_only_the_matrix_clause(self):
+        form = self.parser.parse("John walked before he entered the room.")
+        self.assertEqual(form.predicate, "WALKED")
+        self.assertEqual(form.arguments, ["john"])
+
+    def test_fronted_adjunct_full_tree_still_contains_the_adjunct_for_structural_checks(self):
+        _form, tree = self.parser.parse_with_derivation("Before he entered the room, John walked.")
+        all_tokens = [leaf.token for leaf in collect_leaves(tree)]
+        self.assertIn("he", all_tokens)
+        self.assertIn("entered", all_tokens)
 
     def test_comparative_with_explicit_standard(self):
         form = self.parser.parse("The suitcase is greater than the trophy.")
