@@ -152,7 +152,7 @@ def classify_speech_act(logical_form: Optional[LogicalForm], raw_text: str) -> S
 class QUDEntry:
     """
     One question-or-claim under discussion, kept just structured enough for a later fragment to fill in whatever's still open. open_slot_index names which position in `arguments` is the
-    thing actually being asked about or left unresolved ("Are you free on Tuesday?" -> predicate FREE, arguments [you, tuesday], open_slot_index 1 - the day is what's under discussion).
+    thing actually being asked about or left unresolved ("Are you free on Tuesday?" -> predicate FREE, arguments [you, tuesday], open_slot_index 1: the day is what's under discussion).
     """
     predicate: str
     arguments: List[str]

@@ -95,7 +95,7 @@ class WorldModel:
 
         # The Modal & Attitude context tree. "global" is shared, agreed-upon reality; every other context is scoped to one attitude-holder 
         # and one modal flavor.
-        self.contexts: Dict[str, ContextIndex] = {"global": ContextIndex(id="global")}
+        self.contexts: Dict[str, ContextIndex] = {"global": ContextIndex(id = "global")}
         self.context_facts: Dict[str, Dict[str, List[str]]] = {}
         self._context_counter = 0
 

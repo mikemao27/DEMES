@@ -324,7 +324,7 @@ class LogicalForm:
     tense: str = "present"
     quantifier_meta: Optional[Dict[str, Any]] = None
     quantifier_store: List[StoredQuantifier] = field(default_factory = list)
-    plural_arguments: List[str] = field(default_factory=list)
+    plural_arguments: List[str] = field(default_factory = list)
     is_passive: bool = False
 
     def to_dict(self) -> Dict[str, Any]:

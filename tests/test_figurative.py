@@ -77,7 +77,7 @@ class TestConceptualMetaphorMapping(unittest.TestCase):
 
 class TestFigurativeRepairChain(unittest.TestCase):
     def test_idiom_takes_priority_over_everything_else(self):
-        result = resolve_figurative_meaning("IDIOM:kick_bucket", required_type="PERSON", argument_entries=[])
+        result = resolve_figurative_meaning("IDIOM:kick_bucket", required_type = "PERSON", argument_entries = [])
         self.assertEqual(result, "HAPPENS-TO:DIE")
 
     def test_coercion_applies_when_no_idiom_tag_present(self):

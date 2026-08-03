@@ -22,7 +22,7 @@ from core.types import (
 
 class TestLogicalForm(unittest.TestCase):
     def test_defaults(self):
-        form = LogicalForm(predicate="PORTABLE")
+        form = LogicalForm(predicate = "PORTABLE")
         self.assertEqual(form.arguments, [])
         self.assertFalse(form.is_negated)
         self.assertEqual(form.tense, "present")
@@ -42,12 +42,12 @@ class TestLogicalForm(unittest.TestCase):
 
 class TestEntityLattice(unittest.TestCase):
     def test_atomic_entity(self):
-        suitcase = Entity(id = "suitcase_1", kind="SUITCASE")
+        suitcase = Entity(id = "suitcase_1", kind = "SUITCASE")
         self.assertTrue(suitcase.is_atomic())
         self.assertFalse(suitcase.is_sum)
 
     def test_sum_entity(self):
-        students = Entity(id="students_group", kind = "STUDENT", is_sum = True, members = ["s1", "s2", "s3"])
+        students = Entity(id = "students_group", kind = "STUDENT", is_sum = True, members = ["s1", "s2", "s3"])
         self.assertFalse(students.is_atomic())
         self.assertEqual(len(students.members), 3)
 

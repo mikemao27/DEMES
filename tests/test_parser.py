@@ -190,7 +190,7 @@ class TestNPILicensingOnTrees(unittest.TestCase):
 
     def test_unlicensed_when_no_negation_present(self):
         anyone = DerivationNode(label = "NP", token = "anyone", span = (1, 2))
-        see = DerivationNode(label = "V", token="see", span = (0, 1))
+        see = DerivationNode(label = "V", token = "see", span = (0, 1))
         root = DerivationNode(label = "VP", children = (see, anyone), span = (0, 2))
         self.assertEqual(check_npi_licensing(root), ["anyone"])
 
@@ -382,7 +382,7 @@ class TestClausalComplements(unittest.TestCase):
         self.assertTrue(embedded.is_negated)
 
     def test_matrix_negation_around_the_whole_complement_is_scoped_to_the_matrix_only(self):
-        # "did not think" negates the matrix attitude itself, not John's belief about where Mary is - the embedded clause's own truth stays untouched.
+        # "did not think" negates the matrix attitude itself, not John's belief about where Mary is: the embedded clause's own truth stays untouched.
         form = self.parser.parse("John did not think that Mary is home.")
         self.assertTrue(form.is_negated)
         self.assertEqual(form.tense, "past")

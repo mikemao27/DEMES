@@ -48,7 +48,7 @@ class CCGCategory:
     The direction is "/" for "I want my argument to my RIGHT" and "\\" for "I want my argument to my LEFT", matching the sentence's actual word
     order once combined.
     """
-    def __init__(self, result, argument=None, direction: Optional[str] = None):
+    def __init__(self, result, argument = None, direction: Optional[str] = None):
         self.result = result
         self.argument = argument
         self.direction = direction

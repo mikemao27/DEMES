@@ -51,10 +51,10 @@ class TestLoadTimeValidationExcludesBadEntries(TestLexiconManagerBase):
                 "valency": "none",
             },
         }
-        with open(self.store_path, "w", encoding="utf-8") as f:
+        with open(self.store_path, "w", encoding = "utf-8") as f:
             json.dump(raw, f)
 
-        manager = LexiconManager(store_path=self.store_path)
+        manager = LexiconManager(store_path = self.store_path)
 
         self.assertIsNotNone(manager.get_word_definition("walk"))
         self.assertIsNone(manager.get_word_definition("portable"))
@@ -224,7 +224,7 @@ class TestProvisionalWordInduction(TestLexiconManagerBase):
 
     def test_induced_word_is_not_persisted_to_disk(self):
         self.manager.induce_word("blick", "verb", [{"name": "MOVE", "category": "action"}])
-        with open(self.store_path, "r", encoding="utf-8") as f:
+        with open(self.store_path, "r", encoding = "utf-8") as f:
             on_disk = json.load(f)
         self.assertNotIn("blick", on_disk)
 

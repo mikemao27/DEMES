@@ -39,7 +39,7 @@ def _levenshtein_distance(a: str, b: str) -> int:
 
     for i, char_a in enumerate(a, start = 1):
         current_row = [i]
-        for j, char_b in enumerate(b, start=1):
+        for j, char_b in enumerate(b, start = 1):
             insert_cost = current_row[j - 1] + 1
             delete_cost = previous_row[j] + 1
             substitute_cost = previous_row[j - 1] + (char_a != char_b)
@@ -187,10 +187,10 @@ class NeuralBridge:
 
         from core.primitives import ALL_PRIMITIVES
         prompt = WORD_INDUCTION_PROMPT_TEMPLATE.format(
-            primitive_list=", ".join(sorted(ALL_PRIMITIVES)), word=word, sentence=sentence
+            primitive_list = ", ".join(sorted(ALL_PRIMITIVES)), word = word, sentence = sentence
         )
         try:
-            output = self.llm(prompt, max_tokens=64, stop=["\n\n"], temperature=0.2)
+            output = self.llm(prompt, max_tokens = 64, stop = ["\n\n"], temperature = 0.2)
             text = output["choices"][0]["text"]
         except Exception:
             return None
@@ -203,7 +203,7 @@ class NeuralBridge:
         primitives = [{"name": name, "category": "induced"} for name in primitive_names]
 
         try:
-            lexicon_manager.induce_word(word, category, primitives, provenance="induced_unverified")
+            lexicon_manager.induce_word(word, category, primitives, provenance = "induced_unverified")
         except InvalidPrimitiveError:
             return None
 
@@ -241,7 +241,7 @@ class NeuralBridge:
         if self.llm is None:
             return None
 
-        prompt = IMPLICATURE_PROMPT_TEMPLATE.format(utterance=raw_text)
+        prompt = IMPLICATURE_PROMPT_TEMPLATE.format(utterance = raw_text)
         try:
             output = self.llm(prompt, max_tokens = 32, stop = ["\n\n"], temperature = 0.2)
             text = output["choices"][0]["text"]

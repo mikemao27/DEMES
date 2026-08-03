@@ -215,7 +215,7 @@ class TestEpisodicFactGraph(unittest.TestCase):
         self.world_model.current_turn = 5
         self.world_model.assert_episodic_fact(FrameTemplate.IS_A, "bob", "employee") # Authoritative, fresh.
 
-        self.world_model.expire_provisional_facts(before_turn=5)
+        self.world_model.expire_provisional_facts(before_turn = 5)
 
         self.assertIsNone(self.world_model.query_episodic_fact(FrameTemplate.AT_PLACE, "seattle"))
         self.assertIsNotNone(self.world_model.query_episodic_fact(FrameTemplate.IS_A, "bob"))

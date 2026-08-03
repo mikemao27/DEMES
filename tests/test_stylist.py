@@ -12,6 +12,7 @@ from interface.stylist import (
     _inflect_third_person_singular,
     _realize_subject_phrase,
     _realize_verb_phrase,
+    _realize_coordinated,
     realize_logical_form,
     LocalStylist,
 )
@@ -32,21 +33,28 @@ class TestThirdPersonInflection(unittest.TestCase):
     def test_verb_ending_in_vowel_y_just_adds_s(self):
         self.assertEqual(_inflect_third_person_singular("play"), "plays")
 
-class TestStylistWithLexicon(unittest.TestCase):
+class _StylistLexiconFixture(unittest.TestCase):
+    """
+    Shared setUp/tearDown only: deliberately has no test_ methods of its own, so subclassing it for fixture reuse (the same pattern
+    tests/test_pipeline.py's TestPipelineBase uses) never re-runs a base class's own tests once per subclass.
+    """
     def setUp(self):
         self.test_dir = "tests/temp_data_stylist"
         os.makedirs(self.test_dir, exist_ok = True)
         self.store_path = os.path.join(self.test_dir, "lexicon.json")
         self.lexicon = LexiconManager(store_path = self.store_path)
         self.lexicon.lexicon["john"] = {"category": "proper_noun", "semantic_type": "e", "primitives": [], "valency": "none"}
+        self.lexicon.lexicon["mary"] = {"category": "proper_noun", "semantic_type": "e", "primitives": [], "valency": "none"}
         self.lexicon.lexicon["kick"] = {"category": "verb", "semantic_type": "<e,<e,t>>", "primitives": [{"name": "DO", "category": "action"}], "valency": "transitive"}
         self.lexicon.lexicon["walk"] = {"category": "verb", "semantic_type": "<e, t>", "primitives": [{"name": "MOVE", "category": "action"}], "valency": "intransitive"}
+        self.lexicon.lexicon["think"] = {"category": "verb", "semantic_type": "<s,<e,t>>", "primitives": [{"name": "THINK", "category": "mental"}], "valency": "clausal"}
         self.lexicon.lexicon["ball"] = {"category": "noun", "semantic_type": "e", "primitives": [{"name": "SOMETHING", "category": "entity"}], "valency": "none"}
 
     def tearDown(self):
         if os.path.exists(self.test_dir):
             shutil.rmtree(self.test_dir)
 
+class TestStylistWithLexicon(_StylistLexiconFixture):
     def test_proper_noun_subject_gets_no_determiner(self):
         self.assertEqual(_realize_subject_phrase("john", self.lexicon), "John")
 
@@ -97,6 +105,93 @@ class TestStylistWithLexicon(unittest.TestCase):
     def test_none_logical_form_returns_none(self):
         self.assertIsNone(realize_logical_form(None, self.lexicon))
 
+    def test_list_logical_form_returns_none(self):
+        # realize_logical_form deliberately rejects a coordinated List[LogicalForm] outright: _realize_coordinated is the only path meant to consume one.
+        forms = [LogicalForm(predicate = "WALK", arguments = ["john"]), LogicalForm(predicate = "WALK", arguments = ["mary"])]
+        self.assertIsNone(realize_logical_form(forms, self.lexicon))
+
+class TestRealizePassiveVoice(_StylistLexiconFixture):
+    def test_passive_with_agent(self):
+        form = LogicalForm(predicate = "KICKED", arguments = ["suitcase", "john"], is_passive = True, tense = "past")
+        self.assertEqual(realize_logical_form(form, self.lexicon), "The suitcase was kicked by John.")
+
+    def test_passive_without_agent(self):
+        form = LogicalForm(predicate = "KICKED", arguments = ["suitcase"], is_passive = True, tense = "past")
+        self.assertEqual(realize_logical_form(form, self.lexicon), "The suitcase was kicked.")
+
+    def test_passive_present_tense(self):
+        form = LogicalForm(predicate = "KICKED", arguments = ["suitcase"], is_passive = True, tense = "present")
+        self.assertEqual(realize_logical_form(form, self.lexicon), "The suitcase is kicked.")
+
+    def test_passive_negation(self):
+        form = LogicalForm(predicate = "KICKED", arguments = ["suitcase"], is_passive = True, tense = "past", is_negated = True)
+        self.assertEqual(realize_logical_form(form, self.lexicon), "The suitcase was not kicked.")
+
+class TestRealizeClausalComplement(_StylistLexiconFixture):
+    def test_clausal_complement_sentence(self):
+        embedded = LogicalForm(predicate = "HOME", arguments = ["mary"])
+        form = LogicalForm(predicate = "THINKS", arguments = ["john", embedded])
+        self.assertEqual(realize_logical_form(form, self.lexicon), "John thinks that Mary is home.")
+
+    def test_embedded_negation_is_preserved(self):
+        embedded = LogicalForm(predicate = "HOME", arguments = ["mary"], is_negated = True)
+        form = LogicalForm(predicate = "THINKS", arguments = ["john", embedded])
+        self.assertEqual(realize_logical_form(form, self.lexicon), "John thinks that Mary is not home.")
+
+    def test_unrealizable_embedded_clause_propagates_none(self):
+        embedded = LogicalForm(predicate = "IDIOM:kick_bucket", arguments = ["mary"])
+        form = LogicalForm(predicate = "THINKS", arguments = ["john", embedded])
+        self.assertIsNone(realize_logical_form(form, self.lexicon))
+
+class TestRealizeWhQuestions(_StylistLexiconFixture):
+    def test_subject_wh_question_ends_with_a_question_mark(self):
+        form = LogicalForm(predicate = "WALK", arguments = ["who"])
+        self.assertEqual(realize_logical_form(form, self.lexicon), "Who walks?")
+
+    def test_wh_word_is_never_given_a_the_determiner(self):
+        form = LogicalForm(predicate = "WALK", arguments = ["what"])
+        result = realize_logical_form(form, self.lexicon)
+        self.assertNotIn("The what", result)
+        self.assertEqual(result, "What walks?")
+
+class TestRealizeIdentityRelation(_StylistLexiconFixture):
+    def test_inverted_copular_question_with_what(self):
+        form = LogicalForm(predicate = "IS", arguments = ["what", "suitcase"])
+        self.assertEqual(realize_logical_form(form, self.lexicon), "What is the suitcase?")
+
+    def test_inverted_copular_question_with_who(self):
+        form = LogicalForm(predicate = "IS", arguments = ["who", "john"])
+        self.assertEqual(realize_logical_form(form, self.lexicon), "Who is John?")
+
+    def test_right_hand_np_is_not_capitalized_mid_sentence(self):
+        form = LogicalForm(predicate = "IS", arguments = ["what", "suitcase"])
+        result = realize_logical_form(form, self.lexicon)
+        self.assertNotIn("The suitcase?", result)
+
+    def test_predicate_nominal_declarative(self):
+        form = LogicalForm(predicate = "IS", arguments = ["john", "teacher"])
+        self.assertEqual(realize_logical_form(form, self.lexicon), "John is the teacher.")
+
+class TestRealizeCoordination(_StylistLexiconFixture):
+    def test_two_conjuncts_joined_with_and(self):
+        conjuncts = [LogicalForm(predicate = "PORTABLE", arguments = ["suitcase"]), LogicalForm(predicate = "WALK", arguments = ["john"])]
+        self.assertEqual(_realize_coordinated(conjuncts, "AND", self.lexicon), "The suitcase is portable and John walks.")
+
+    def test_two_conjuncts_joined_with_or(self):
+        conjuncts = [LogicalForm(predicate = "PORTABLE", arguments = ["suitcase"]), LogicalForm(predicate = "WALK", arguments = ["john"])]
+        self.assertEqual(_realize_coordinated(conjuncts, "OR", self.lexicon), "The suitcase is portable or John walks.")
+
+    def test_proper_noun_leading_a_later_conjunct_stays_capitalized(self):
+        # The bug this test locks in: a naive "lowercase every conjunct after the first" approach would wrongly produce "...and john walks."
+        conjuncts = [LogicalForm(predicate = "PORTABLE", arguments = ["suitcase"]), LogicalForm(predicate = "WALK", arguments = ["john"])]
+        result = _realize_coordinated(conjuncts, "AND", self.lexicon)
+        self.assertIn("and John walks", result)
+        self.assertNotIn("and john walks", result)
+
+    def test_one_unrealizable_conjunct_fails_the_whole_coordination(self):
+        conjuncts = [LogicalForm(predicate = "PORTABLE", arguments = ["suitcase"]), LogicalForm(predicate = "IDIOM:kick_bucket", arguments = ["john"])]
+        self.assertIsNone(_realize_coordinated(conjuncts, "AND", self.lexicon))
+
 class TestLocalStylistWithoutModel(unittest.TestCase):
     """
     No GGUF weights present in this environment: exercises the fully symbolic path.
@@ -126,12 +221,38 @@ class TestLocalStylistWithoutModel(unittest.TestCase):
         self.assertIn("Unparsable syntax.", result)
 
     def test_render_falls_back_when_logical_form_shape_is_uncovered(self):
-        # An idiom-tagged predicate: the symbolic realizer declines, so the deterministic formatter (which works from the 
+        # An idiom-tagged predicate: the symbolic realizer declines, so the deterministic formatter (which works from the
         # payload dict, not the LogicalForm) takes over.
-        form = LogicalForm(predicate="IDIOM:kick_bucket", arguments=["john"])
+        form = LogicalForm(predicate = "IDIOM:kick_bucket", arguments = ["john"])
         payload = {"status": "success", "predicate": "IDIOM:kick_bucket", "arguments": ["john"], "truth_value": True}
         result = self.stylist.render(payload, form)
         self.assertIn("idiom:kick_bucket", result.lower())
+
+    def test_render_dispatches_a_coordinated_list_to_the_coordination_realizer(self):
+        # The bug this locks in: render() used to hand a List[LogicalForm] straight to realize_logical_form, which crashed with
+        # AttributeError('list' object has no attribute 'predicate') the instant a coordinated sentence reached it.
+        self.lexicon.lexicon["john"] = {"category": "proper_noun", "semantic_type": "e", "primitives": [], "valency": "none"}
+        forms = [LogicalForm(predicate = "PORTABLE", arguments = ["suitcase"]), LogicalForm(predicate = "WALK", arguments = ["john"])]
+        payload = {"status": "success", "connective": "AND", "truth_value": True, "conjuncts": []}
+        result = self.stylist.render(payload, forms)
+        self.assertEqual(result, "The suitcase is portable and John walks.")
+
+    def test_fallback_render_handles_a_coordinated_payload_shape(self):
+        # A coordinated semantic payload (core/pipeline.py's _combine_coordinated_payloads) has "conjuncts"/"connective" at the top level,
+        # not "predicate"/"arguments": the fallback formatter must not silently produce a generic "STATEMENT ()" message for it.
+        payload = {
+            "status": "success",
+            "connective": "AND",
+            "truth_value": True,
+            "conjuncts": [
+                {"predicate": "PORTABLE", "arguments": ["suitcase"]},
+                {"predicate": "WALK", "arguments": ["john"]},
+            ],
+        }
+        result = self.stylist._fallback_render(payload)
+        self.assertIn("portable (suitcase)", result)
+        self.assertIn("walk (john)", result)
+        self.assertIn(" and ", result)
 
 class _FakeLLM:
     """
@@ -151,7 +272,7 @@ class TestLocalStylistWithFakeModel(unittest.TestCase):
         os.makedirs(self.test_dir, exist_ok = True)
         self.store_path = os.path.join(self.test_dir, "lexicon.json")
         self.lexicon = LexiconManager(store_path = self.store_path)
-        self.stylist = LocalStylist(self.lexicon, model_path="definitely/does/not/exist.gguf")
+        self.stylist = LocalStylist(self.lexicon, model_path = "definitely/does/not/exist.gguf")
 
     def tearDown(self):
         if os.path.exists(self.test_dir):

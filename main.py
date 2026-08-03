@@ -58,14 +58,25 @@ def print_banner() -> None:
 
 def print_transparency_view(logical_form: Any, payload: Dict[str, Any], result: Dict[str, Any]) -> None:
     """
-    Prints an explicit, color-coded inspection view of what DEMES structurally understood from the utterance BEFORE displaying 
-    the styled output: including, when present, the secondary signals (word senses resolved, presuppositions accommodated, implicatures noted) 
-    that don't change the headline truth value but are still part of what DEMES understood.
+    Prints an explicit, color-coded inspection view of what DEMES structurally understood from the utterance BEFORE displaying
+    the styled output: including, when present, the secondary signals (word senses resolved, presuppositions accommodated, implicatures noted)
+    that don't change the headline truth value but are still part of what DEMES understood. `logical_form` can now be a List[LogicalForm]
+    (a coordinated sentence, core/pipeline.py Phase 2.4): each conjunct is listed individually rather than assuming a single LogicalForm's
+    .predicate/.arguments always exist directly on whatever `logical_form` is.
     """
     print(f"{DIM}[DEMES Core Inspection]{RESET}")
     print(f"{INDENT}{CYAN}Speech Act{RESET}: {DIM}{result.get('speech_act')}{RESET}")
 
-    if logical_form:
+    if isinstance(logical_form, list):
+        print(f"{INDENT}{CYAN}Connective{RESET}: {BOLD}{payload.get('connective')}{RESET}")
+        for index, conjunct in enumerate(logical_form, start = 1):
+            print(f"{INDENT}{CYAN}Conjunct {index} Predicate{RESET}: {BOLD}{conjunct.predicate}{RESET}")
+            print(f"{INDENT}{CYAN}Conjunct {index} Arguments{RESET}: {DIM}{conjunct.arguments}{RESET}")
+
+        truth = payload.get("truth_value", False)
+        truth_str = f"{GREEN}Validated (True){RESET}" if truth else f"{RED}Conflict / Unmapped (False){RESET}"
+        print(f"{INDENT}{CYAN}Truth Val{RESET}: {truth_str}")
+    elif logical_form:
         print(f"{INDENT}{CYAN}Predicate{RESET}: {BOLD}{logical_form.predicate}{RESET}")
         print(f"{INDENT}{CYAN}Arguments{RESET}: {DIM}{logical_form.arguments}{RESET}")
 
@@ -151,8 +162,8 @@ def main() -> None:
     # 2. Initialize the presentation layer (loads the one local model instance, if any weights exist).
     stylist = LocalStylist(pipeline.lexicon)
 
-    # 3. Share that same model instance with the neural bridge - never load the weights twice.
-    neural_bridge = NeuralBridge(llm=stylist.llm)
+    # 3. Share that same model instance with the neural bridge: never load the weights twice.
+    neural_bridge = NeuralBridge(llm = stylist.llm)
 
     print_banner()
     turn_count = 0

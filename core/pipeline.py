@@ -86,7 +86,7 @@ class DEMESPipeline:
     Coordinates the full symbolic NLU pipeline for one turn of conversation.
     """
     def __init__(self, lexicon_path: str = "data/lexicon.json"):
-        self.lexicon = LexiconManager(store_path=lexicon_path)
+        self.lexicon = LexiconManager(store_path = lexicon_path)
         self.world_model = WorldModel()
         self.parser = ChartParser(self.lexicon)
         self.compiler = SemanticCompiler(self.world_model, self.lexicon)
@@ -120,7 +120,7 @@ class DEMESPipeline:
         conjunct_payloads = [self.compiler.compile_and_evaluate(conjunct) for conjunct in conjuncts]
         for conjunct, payload in zip(conjuncts, conjunct_payloads):
             self._attach_idiom_meaning(conjunct, payload)
-            self.world_model.record_event(conjunct.predicate, roles={}, tense=conjunct.tense)
+            self.world_model.record_event(conjunct.predicate, roles = {}, tense = conjunct.tense)
 
         modal_context = self._open_modal_attitude_context(representative_form)
         qud_entry = self._update_qud_stack(representative_form)
@@ -197,7 +197,7 @@ class DEMESPipeline:
     # Question Under Discussion (QUD) stack auto-population.
     def _update_qud_stack(self, logical_form) -> Optional[Dict[str, Any]]:
         """
-        If `logical_form` contains a wh-word among its arguments (core/parser.py's WH_WORDS - only the non-movement question patterns the grammar
+        If `logical_form` contains a wh-word among its arguments (core/parser.py's WH_WORDS: only the non-movement question patterns the grammar
         actually supports: the wh-word fills an ordinary argument position directly, e.g. "Who walked?" -> arguments ["who"], "What is the suitcase?"
         -> arguments ["what", "suitcase"]), pushes a QUDEntry marking that position as the open slot onto this pipeline's persistent QUDStack. This is
         what makes core/discourse.py's QUDStack, correct and tested standalone since Phase 1, but never populated by any real parse until wh-questions

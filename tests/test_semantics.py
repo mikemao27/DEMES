@@ -119,7 +119,7 @@ class TestAktionsartDerivation(unittest.TestCase):
         self.assertEqual(derive_aktionsart(explication), Aktionsart.ACTIVITY)
 
     def test_does_with_result_is_an_accomplishment(self):
-        explication = Explication(frame = FrameTemplate.DOES, slots={"x": "john", "action": "BUILD", "result": "HOUSE"})
+        explication = Explication(frame = FrameTemplate.DOES, slots = {"x": "john", "action": "BUILD", "result": "HOUSE"})
         self.assertEqual(derive_aktionsart(explication), Aktionsart.ACCOMPLISHMENT)
 
     def test_happens_to_is_an_achievement(self):
