@@ -52,9 +52,7 @@ def print_banner() -> None:
     """
     Displays the welcome banner and system architectural mode.
     """
-    print(f"\n{BOLD}{MAGENTA}======================================================================{RESET}")
-    print(f"{BOLD}{CYAN} DEMES {RESET}{DIM}— Deconstructive Meaning Encoding & Expressive Syntax{RESET}")
-    print(f"\n{BOLD}{MAGENTA}======================================================================{RESET}")
+    print(f"{BOLD}{CYAN} DEMES: Deconstructive Meaning Encoding & Expressive Syntax{RESET}")
     print(f"{DIM}Neuro-Symbolic NLU Engine | Closed-Vocabulary Symbolic Core + Optional Local Model{RESET}")
     print(f"{DIM}Type 'exit' or 'quit' to end the session.{RESET}\n")
 
