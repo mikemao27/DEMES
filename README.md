@@ -28,13 +28,13 @@ This project draws inspiration from a variety of sources in artificial intellige
 Feel free to reach out with questions or collaboration ideas. While we do not explore it explicitly here, we hope that the presence of such technology may encourage the development of linguistic models that may revive certain classical languages like Latin that may bee cast aside as "dead", but have immense literary and societal impact.
 
 ## Citation
-If you find this project useful, please give it a star and cite it via [**GitHub**](https://github.com/mikemao27/Sproot). See `LICENSE` (Apache 2.0) for terms of use and attribution. We provide a sample **bibtex** citation blurb below for ease of usage. The software is free to use with attribution. The issue of natural language understanding is extremely complex, even with the current auto-regressive algorithms (which do not capture any sense of linguistic meaning) or primitive encoded language (which is brittle when it comes to spelling errors or ambiguous meanings like idioms). We hope that others may find this useful and build upon our software.
+If you find this project useful, please give it a star and cite it via [**GitHub**](https://github.com/mikemao27/DEMES). See `LICENSE` (Apache 2.0) for terms of use and attribution. We provide a sample **bibtex** citation blurb below for ease of usage. The software is free to use with attribution. The issue of natural language understanding is extremely complex, even with the current auto-regressive algorithms (which do not capture any sense of linguistic meaning) or primitive encoded language (which is brittle when it comes to spelling errors or ambiguous meanings like idioms). We hope that others may find this useful and build upon our software.
 
 ```bibtex
 @software{DEMES,
   author = {Mao, Mike},
   title = {DEMES: Deconstructive Encoding of Meaning and Expressive Syntax},
   year = {2026},
-  url = {https://github.com/mikemao27/Sproot},
+  url = {https://github.com/mikemao27/DEMES},
   version = {1.0.0}
 }
