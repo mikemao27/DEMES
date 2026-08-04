@@ -223,6 +223,45 @@ class TestEpisodicFactGraph(unittest.TestCase):
     def test_external_knowledge_graph_is_an_honest_stub(self):
         self.assertIsNone(self.world_model.query_external_knowledge_graph(FrameTemplate.IS_A, "anything"))
 
+class TestRelationalFacts(unittest.TestCase):
+    """
+    The binary (subject, object) fact store: additive to knowledge_base's unary-only table, and distinct from the closed,
+    FrameTemplate-keyed Episodic Fact Graph above: this one is for arbitrary verb predicates.
+    """
+    def setUp(self):
+        self.world_model = WorldModel()
+
+    def test_untracked_predicate_stays_permissive(self):
+        self.assertTrue(self.world_model.holds_relationally("read", "john", "book"))
+
+    def test_recorded_pair_holds(self):
+        self.world_model.assert_relational_fact("read", "john", "book")
+        self.assertTrue(self.world_model.holds_relationally("read", "john", "book"))
+
+    def test_once_tracked_an_unrecorded_pair_does_not_hold(self):
+        self.world_model.assert_relational_fact("read", "john", "book")
+        self.assertFalse(self.world_model.holds_relationally("read", "mary", "book"))
+
+    def test_assertion_is_case_insensitive(self):
+        self.world_model.assert_relational_fact("READ", "John", "Book")
+        self.assertTrue(self.world_model.holds_relationally("read", "john", "book"))
+
+    def test_asserting_the_same_pair_twice_does_not_duplicate(self):
+        self.world_model.assert_relational_fact("read", "john", "book")
+        self.world_model.assert_relational_fact("read", "john", "book")
+        self.assertEqual(self.world_model.relational_facts["read"], [("john", "book")])
+
+class TestEntitiesOfKind(unittest.TestCase):
+    def setUp(self):
+        self.world_model = WorldModel()
+
+    def test_seeded_kind_returns_its_holder_list(self):
+        self.world_model.knowledge_base["student"] = ["alice", "bob"]
+        self.assertEqual(self.world_model.entities_of_kind("STUDENT"), ["alice", "bob"])
+
+    def test_untracked_kind_returns_empty_list_not_a_guess(self):
+        self.assertEqual(self.world_model.entities_of_kind("dragon"), [])
+
 class TestClearDiscourseResetsNewStateButKeepsKnowledgeBase(unittest.TestCase):
     def test_clear_discourse_resets_everything_conversation_scoped(self):
         world_model = WorldModel()
@@ -233,6 +272,7 @@ class TestClearDiscourseResetsNewStateButKeepsKnowledgeBase(unittest.TestCase):
         context = world_model.open_context("john", ModalFlavor.EPISTEMIC)
         world_model.assert_fact_in_context(context.id, "at_home", "mary")
         world_model.assert_episodic_fact(FrameTemplate.IS_A, "bob", "employee")
+        world_model.assert_relational_fact("read", "john", "book")
 
         world_model.clear_discourse()
 
@@ -243,6 +283,7 @@ class TestClearDiscourseResetsNewStateButKeepsKnowledgeBase(unittest.TestCase):
         self.assertEqual(list(world_model.contexts.keys()), ["global"])
         self.assertEqual(world_model.context_facts, {})
         self.assertEqual(world_model.episodic_facts, {})
+        self.assertEqual(world_model.relational_facts, {})
         self.assertIn("portable", world_model.knowledge_base) # Durable, not conversation-scoped.
 
 if __name__ == "__main__":

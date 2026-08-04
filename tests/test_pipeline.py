@@ -129,6 +129,31 @@ class TestMultiQuantifierIntegration(TestPipelineBase):
         self.assertEqual(len(form.quantifier_store), 2)
         self.assertIsNone(form.quantifier_meta)
 
+    def test_real_multi_turn_facts_make_the_quantified_sentence_true(self):
+        # Fully natural, no manual world-model seeding: two ordinary declarative turns record real relational facts (Sub-step A1), which the
+        # quantified sentence's scoped evaluation (Sub-step A3) then genuinely checks against.
+        self.pipeline.lexicon.lexicon["alice"] = {"category": "proper_noun", "semantic_type": "e", "primitives": [], "valency": "none"}
+        self.pipeline.lexicon.lexicon["bob"] = {"category": "proper_noun", "semantic_type": "e", "primitives": [], "valency": "none"}
+        self.pipeline.world_model.knowledge_base["student"] = ["alice", "bob"]
+        self.pipeline.world_model.knowledge_base["book"] = ["book"]
+
+        self.pipeline.process_utterance("Alice read the book.")
+        self.pipeline.process_utterance("Bob read the book.")
+
+        result = self.pipeline.process_utterance("Every student read a book.")
+        self.assertTrue(result["semantics"]["truth_value"])
+        self.assertEqual(result["semantics"]["quantifier_scope"]["reading_count"], 2)
+
+    def test_real_multi_turn_facts_make_the_quantified_sentence_false(self):
+        self.pipeline.lexicon.lexicon["alice"] = {"category": "proper_noun", "semantic_type": "e", "primitives": [], "valency": "none"}
+        self.pipeline.world_model.knowledge_base["student"] = ["alice", "bob"] # Bob never gets his own turn below.
+        self.pipeline.world_model.knowledge_base["book"] = ["book"]
+
+        self.pipeline.process_utterance("Alice read the book.")
+
+        result = self.pipeline.process_utterance("Every student read a book.")
+        self.assertFalse(result["semantics"]["truth_value"])
+
 class TestWordSenseDisambiguationIntegration(TestPipelineBase):
     def test_bank_resolves_to_river_sense_near_a_geographical_sibling(self):
         result = self.pipeline.process_utterance("The bank is near the river.")
@@ -286,6 +311,29 @@ class TestIdiomIntegration(TestPipelineBase):
         self.pipeline.lexicon.lexicon["ball"] = {"category": "noun", "semantic_type": "e", "primitives": [{"name": "SOMETHING", "category": "entity"}], "valency": "none"}
         literal_result = self.pipeline.process_utterance("John kicked the ball.")
         self.assertNotIn("idiom_meaning", literal_result["semantics"])
+
+class TestRelationalFactIntegration(TestPipelineBase):
+    """
+    Phase 3, Sub-step A1: an ordinary true two-argument claim leaves behind a real binary fact (core/world_model.py's relational_facts), so a later 
+    multi-quantifier sentence has something real to check its relation against instead of staying permissively true forever.
+    """
+    def setUp(self):
+        super().setUp()
+        # "bucket" is idiom-tagged when kicked (see TestIdiomIntegration above): a plain, non-idiomatic object is needed here instead.
+        self.pipeline.lexicon.lexicon["ball"] = {"category": "noun", "semantic_type": "e", "primitives": [{"name": "SOMETHING", "category": "entity"}], "valency": "none"}
+
+    def test_true_transitive_claim_is_recorded(self):
+        self.pipeline.process_utterance("John kicked the ball.")
+        self.assertIn(("john", "ball"), self.pipeline.world_model.relational_facts.get("kicked", []))
+
+    def test_negated_claim_is_not_recorded(self):
+        result = self.pipeline.process_utterance("John did not kick the ball.")
+        self.assertFalse(result["semantics"]["truth_value"])
+        self.assertNotIn("kicked", self.pipeline.world_model.relational_facts)
+
+    def test_single_argument_sentence_is_not_recorded(self):
+        self.pipeline.process_utterance("The suitcase is portable.")
+        self.assertEqual(self.pipeline.world_model.relational_facts, {})
 
 if __name__ == "__main__":
     unittest.main()

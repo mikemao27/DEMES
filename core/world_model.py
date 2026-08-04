@@ -36,7 +36,7 @@ ends up filling it in; it does not fabricate an answer today.
 """
 
 from enum import Enum
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 
 from core.types import DiscourseReferent, Entity, EventRecord, ContextIndex, ModalFlavor, Explication, FrameTemplate
 
@@ -102,10 +102,17 @@ class WorldModel:
         # The Episodic Fact Graph: one-off, contingent facts, each provenance-tagged.
         self.episodic_facts: Dict[str, Dict[str, Any]] = {}
 
+        # Binary relational facts: which (subject, object) pairs a given verb predicate is actually recorded as holding between, for arbitrary verbs:
+        # additive to, not a replacement for, knowledge_base's unary-only table, and deliberately separate from the Episodic Fact Graph above (that one
+        # is keyed by a closed 15-value FrameTemplate vocabulary, never meant to cover arbitrary verbs like "read" or "kick"). This is what gives a
+        # multi-quantifier sentence ("every student read a book", core/semantics.py's _evaluate_scoped_quantifiers) something real to check a relation
+        # against, instead of the relation half of that check staying permissively true forever.
+        self.relational_facts: Dict[str, List[Tuple[str, str]]] = {}
+
     # Original interface, unchanged: extensional validation and discourse referents.
     def validate_assertion(self, predicate: str, arguments: List[Any]) -> bool:
         """
-        Validates a global-reality assertion. If the predicate is tracked in the knowledge base, every argument must be a recorded holder of it; 
+        Validates a global-reality assertion. If the predicate is tracked in the knowledge base, every argument must be a recorded holder of it;
         an untracked predicate stays permissive.
         """
         clean_pred = predicate.lower()
@@ -113,6 +120,40 @@ class WorldModel:
         if known_holders is None:
             return True
         return all(str(arg).lower() in known_holders for arg in arguments)
+
+    def assert_relational_fact(self, predicate: str, subject: str, obj: str) -> None:
+        """
+        Records that the binary relation `predicate` holds between `subject` and `obj`. This is what lets an ordinary sentence ("John read the book.")
+        leave behind a real, checkable fact: core/pipeline.py's _record_relational_fact_if_applicable is what actually calls this from a live turn,
+        for exactly the sentence shapes where "this one claim corresponds to exactly one (subject, object) pair" is unambiguous.
+        """
+        clean_pred = predicate.lower()
+        pair = (subject.lower(), obj.lower())
+        holders = self.relational_facts.setdefault(clean_pred, [])
+        if pair not in holders:
+            holders.append(pair)
+
+    def holds_relationally(self, predicate: str, subject: str, obj: str) -> bool:
+        """
+        The binary-relation counterpart to validate_assertion: if `predicate` has never had any relational fact recorded for it at all, stays
+        permissive (True), the same "untracked predicate stays permissive" discipline validate_assertion already uses for unary facts. Once at
+        least one relational fact has been recorded for a predicate, only the specific recorded (subject, object) pairs count as holding.
+        """
+        clean_pred = predicate.lower()
+        known_pairs = self.relational_facts.get(clean_pred)
+        if known_pairs is None:
+            return True
+        
+        return (subject.lower(), obj.lower()) in known_pairs
+
+    def entities_of_kind(self, kind: str) -> List[str]:
+        """
+        Returns every entity recorded as belonging to `kind` (e.g. "STUDENT" -> ["alice", "bob"]), by the same flat convention validate_assertion
+        already relies on for ordinary unary facts: a kind name is just another predicate in knowledge_base, and its holder list IS its extension.
+        This is what lets core/semantics.py's _evaluate_scoped_quantifiers walk "every actual student" for a quantifier whose restrictor is STUDENT,
+        rather than guessing. An untracked kind returns an empty list, not a guess at who might belong to it.
+        """
+        return list(self.knowledge_base.get(kind.lower(), []))
 
     def register_referent(self, name: str, entity_type: str, properties: List[str] = None) -> str:
         """
@@ -136,9 +177,9 @@ class WorldModel:
 
     def clear_discourse(self) -> None:
         """
-        Resets everything scoped to "this conversation" (active referents, registered entities, the event timeline, non-global attitude contexts, 
-        and episodic facts) when the conversation window resets. `knowledge_base` (durable, hand-seeded world facts) is deliberately left untouched: 
-        it isn't something this conversation introduced.
+        Resets everything scoped to "this conversation" (active referents, registered entities, the event timeline, non-global attitude contexts,
+        episodic facts, and relational facts) when the conversation window resets. `knowledge_base` (durable, hand-seeded world facts) is deliberately
+        left untouched: it isn't something this conversation introduced.
         """
         self.active_referents.clear()
         self._referent_counter = 0
@@ -150,6 +191,7 @@ class WorldModel:
         self.context_facts.clear()
         self._context_counter = 0
         self.episodic_facts.clear()
+        self.relational_facts.clear()
 
     # Link's lattice: plural entities, and collective vs. distributive checks.
     def register_entity(self, entity_id: str, kind: str, is_sum: bool = False) -> Entity:

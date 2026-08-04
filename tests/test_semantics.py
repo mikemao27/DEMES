@@ -109,6 +109,13 @@ class TestCooperStorage(unittest.TestCase):
         q = StoredQuantifier(operator = "EXISTS", restrictor = "BOOK", bound_variable = "y", context_id = "global")
         self.assertEqual(enumerate_scope_readings([q]), [[q]])
 
+    def test_first_reading_is_always_the_surface_left_to_right_order(self):
+        # SemanticCompiler._evaluate_scoped_quantifiers relies on this itertools.permutations property as its default reading: pinned explicitly
+        # here so that reliance is never silently invalidated by a future change to enumerate_scope_readings' implementation.
+        every_student = StoredQuantifier(operator = "FORALL", restrictor = "STUDENT", bound_variable = "x0", context_id = "global")
+        a_book = StoredQuantifier(operator = "EXISTS", restrictor = "BOOK", bound_variable = "x1", context_id = "global")
+        self.assertEqual(enumerate_scope_readings([every_student, a_book])[0], [every_student, a_book])
+
 class TestAktionsartDerivation(unittest.TestCase):
     def test_has_property_is_a_state(self):
         explication = Explication(frame = FrameTemplate.HAS_PROPERTY, slots = {"x": "suitcase", "property": "PORTABLE"})
@@ -178,6 +185,82 @@ class TestSemanticCompilerEvaluation(unittest.TestCase):
     def test_extensional_fallback_for_untracked_adjective(self):
         # "heavy" isn't in the seeded lexicon at all here, so intensional match can't apply: falls through to the world model's own knowledge_base, which does track "heavy".
         form = LogicalForm(predicate = "HEAVY", arguments = ["suitcase"])
+        payload = self.compiler.compile_and_evaluate(form)
+        self.assertTrue(payload["truth_value"])
+
+class TestScopedQuantifierEvaluation(unittest.TestCase):
+    """
+    Phase 3, Sub-step A3: real Cooper-storage evaluation for a genuinely multi-quantifier sentence, using core/world_model.py's entities_of_kind
+    and relational_facts (Sub-steps A1/A2) plus core/semantics.py's own beta-reduction machinery at the leaf.
+    """
+    def setUp(self):
+        self.test_dir = "tests/temp_data_semantics_scoped"
+        os.makedirs(self.test_dir, exist_ok = True)
+        self.store_path = os.path.join(self.test_dir, "lexicon.json")
+
+        self.lexicon = LexiconManager(store_path = self.store_path)
+        self.world_model = WorldModel()
+        self.world_model.knowledge_base["student"] = ["alice", "bob"]
+        self.world_model.knowledge_base["book"] = ["book1"]
+        self.compiler = SemanticCompiler(self.world_model, self.lexicon)
+
+        self.every_student = StoredQuantifier(operator = "FORALL", restrictor = "STUDENT", bound_variable = "x0", context_id = "global")
+        self.a_book = StoredQuantifier(operator = "EXISTS", restrictor = "BOOK", bound_variable = "x1", context_id = "global")
+
+    def tearDown(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def _form(self, is_negated: bool = False) -> LogicalForm:
+        form = LogicalForm(predicate = "READ", arguments = ["student", "book"], is_negated = is_negated)
+        form.quantifier_store = [self.every_student, self.a_book]
+        return form
+
+    def test_true_when_every_student_has_a_recorded_pair(self):
+        self.world_model.relational_facts["read"] = [("alice", "book1"), ("bob", "book1")]
+        payload = self.compiler.compile_and_evaluate(self._form())
+        self.assertTrue(payload["truth_value"])
+
+    def test_false_when_one_student_has_no_recorded_pair(self):
+        # The first genuinely non-vacuous multi-quantifier falsification: bob was never recorded as having read anything.
+        self.world_model.relational_facts["read"] = [("alice", "book1")]
+        payload = self.compiler.compile_and_evaluate(self._form())
+        self.assertFalse(payload["truth_value"])
+
+    def test_untracked_relation_stays_permissive(self):
+        # "read" has no relational facts recorded for it at all: holds_relationally's own permissive-when-untracked default applies.
+        payload = self.compiler.compile_and_evaluate(self._form())
+        self.assertTrue(payload["truth_value"])
+
+    def test_negation_inverts_the_scoped_result(self):
+        self.world_model.relational_facts["read"] = [("alice", "book1")] # False without negation (bob missing).
+        payload = self.compiler.compile_and_evaluate(self._form(is_negated = True))
+        self.assertTrue(payload["truth_value"])
+
+    def test_quantifier_scope_payload_is_attached(self):
+        self.world_model.relational_facts["read"] = [("alice", "book1"), ("bob", "book1")]
+        payload = self.compiler.compile_and_evaluate(self._form())
+        self.assertEqual(payload["quantifier_scope"]["reading_count"], 2)
+        self.assertEqual(payload["quantifier_scope"]["surface_reading"], [self.every_student, self.a_book])
+        self.assertEqual(payload["quantifier_scope"]["claim"], "READ(x0)(x1)")
+
+    def test_mismatched_shape_falls_back_without_a_scope_payload(self):
+        # Three quantifiers isn't a shape core/parser.py can currently produce: falls back to the ordinary standard-predicate evaluator
+        # (permissive, since READ is untracked in knowledge_base) rather than guessing at a generalization nothing can test yet.
+        form = LogicalForm(predicate = "READ", arguments = ["student", "book"])
+        form.quantifier_store = [self.every_student, self.a_book, self.every_student]
+        payload = self.compiler.compile_and_evaluate(form)
+        self.assertTrue(payload["truth_value"])
+        self.assertNotIn("quantifier_scope", payload)
+
+    def test_exists_operator_only_needs_one_matching_entity(self):
+        # "Some student read a book": EXISTS instead of FORALL - alice alone is enough.
+        form = LogicalForm(predicate = "READ", arguments = ["student", "book"])
+        form.quantifier_store = [
+            StoredQuantifier(operator = "EXISTS", restrictor = "STUDENT", bound_variable = "x0", context_id = "global"),
+            self.a_book,
+        ]
+        self.world_model.relational_facts["read"] = [("alice", "book1")]
         payload = self.compiler.compile_and_evaluate(form)
         self.assertTrue(payload["truth_value"])
 

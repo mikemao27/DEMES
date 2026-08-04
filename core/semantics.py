@@ -5,12 +5,18 @@ WHAT LIVES HERE, IN TWO PARTS: Part one is the PRACTICAL evaluator (SemanticComp
 LogicalForm core/parser.py produced, checks the claim against what the lexicon says a word means and what the world model records as fact, and returns a plain, 
 inspectable true/false payload. This is what makes the terminal's "Truth Val" line show something real.
 
-Part two is real compositional semantics: variable binding and function application (formally, beta-reduction) built out of an actual small term language 
-(Variable, Constant, Application) rather than a stub, plus Cooper Storage for quantifier scope. These are implemented here as correct, independently-tested mechanisms: 
-honestly, they are not yet fed by core/parser.py end to end. The parser currently builds a LogicalForm by reading facts off a finished derivation tree rather than
-composing lambda expressions live as it combines words, and it doesn't yet track more than one quantifier per sentence. Wiring the parser to build real compositional 
-meaning as it parses, so a sentence like "Every student read a book" can genuinely carry two different scope readings instead of just being flagged as one, is real 
-follow-up work, not something this file can claim to have finished by itself. What's here is the correct engine for that work to plug into.
+Part two is real compositional semantics: variable binding and function application (formally, beta-reduction) built out of an actual small term language
+(Variable, Constant, Application) rather than a stub, plus Cooper Storage for quantifier scope. `SemanticCompiler._evaluate_scoped_quantifiers` is where these
+two parts actually meet: a genuinely multi-quantifier sentence ("every student read a book": core/parser.py has tracked more than one quantifier per sentence
+since Phase 2.1) walks real registered entities matching each quantifier's restrictor and, at each leaf, builds and beta-reduces the curried relation claim
+via this file's own term language, checked against core/world_model.py's relational fact store, a real, live consumer of beta-reduction, not just its own
+unit test. What's still honestly NOT true: core/parser.py still doesn't compose lambda expressions live as it parses (it builds a flat LogicalForm by reading
+facts off a finished derivation tree, same as ever): the term language is invoked entirely at EVALUATION time, from the already-flat LogicalForm's
+quantifier_store, not woven through parsing itself. That deeper rewrite (the chart carrying semantic terms alongside syntactic categories) remains deliberately
+out of scope: the flat single-predicate/single-quantifier paths below already evaluate their sentence shapes correctly without it, so forcing the term language
+into them would add complexity without a new capability. Multi-quantifier scope AMBIGUITY resolution (choosing which of several scope readings a sentence
+actually means) is also still open: `_evaluate_scoped_quantifiers` uses the surface-order reading as its default and exposes every other reading
+`enumerate_scope_readings` finds on the result payload, but doesn't itself choose between them.
 
 WHY BETA-REDUCTION IS BEING BUILT NOW, NOT LEFT AS A STUB: An earlier, narrower pass through this codebase deliberately deferred real beta-reduction to avoid
 turning a bug-fixing pass into a full semantics rewrite. The architecture plan approved since then commits to it explicitly as part of this layer's job. That later, 
@@ -18,7 +24,7 @@ more deliberated decision is what this file follows: the earlier deferral doesn'
 """
 
 from itertools import permutations
-from typing import Dict, Any, Optional, List, Union
+from typing import Dict, Any, Optional, List, Union, Tuple
 
 from core.types import LogicalForm, LambdaExpression, SemanticType, StoredQuantifier, Explication, FrameTemplate, Aktionsart
 
@@ -187,7 +193,10 @@ class SemanticCompiler:
 
     def compile_and_evaluate(self, logical_form: Optional[LogicalForm]) -> Dict[str, Any]:
         """
-        Evaluates a full turn: dispatches to quantified or standard-predicate evaluation, applies negation, and builds the inspectable result payload.
+        Evaluates a full turn: dispatches to scoped multi-quantifier, single-quantifier, or standard-predicate evaluation, applies negation, and
+        builds the inspectable result payload. A sentence with 2+ stored quantifiers is checked first, since quantifier_meta (the single-quantifier
+        shape) is never populated alongside it (see core/types.py's LogicalForm docstring): without this check first, a genuinely multi-quantifier
+        sentence would silently fall through to the permissive standard-predicate path and never get evaluated as a quantified claim at all.
         """
         if not logical_form:
             return {
@@ -196,7 +205,10 @@ class SemanticCompiler:
                 "response_intent": "clarification",
             }
 
-        if logical_form.quantifier_meta:
+        quantifier_scope = None
+        if len(logical_form.quantifier_store) >= 2:
+            evaluation_result, quantifier_scope = self._evaluate_scoped_quantifiers(logical_form)
+        elif logical_form.quantifier_meta:
             evaluation_result = self._evaluate_quantified_predicate(logical_form)
         else:
             evaluation_result = self._evaluate_standard_predicate(logical_form)
@@ -204,7 +216,7 @@ class SemanticCompiler:
         if logical_form.is_negated:
             evaluation_result = not evaluation_result
 
-        return {
+        payload = {
             "status": "success",
             "predicate": logical_form.predicate,
             "arguments": logical_form.arguments,
@@ -213,6 +225,10 @@ class SemanticCompiler:
             "quantifier": logical_form.quantifier_meta,
             "response_intent": "assertion_ack" if evaluation_result else "contradiction_notice",
         }
+        if quantifier_scope is not None:
+            payload["quantifier_scope"] = quantifier_scope
+
+        return payload
 
     def _evaluate_standard_predicate(self, form: LogicalForm) -> bool:
         """
@@ -270,3 +286,102 @@ class SemanticCompiler:
             return not any(entity in target_property_holders for entity in matching_entities)
 
         return True
+
+    def _evaluate_scoped_quantifiers(self, form: LogicalForm) -> Tuple[bool, Optional[Dict[str, Any]]]:
+        """
+        Real Cooper-storage evaluation for a genuinely multi-quantifier sentence ("every student read a book"): walks actual registered entities
+        matching each quantifier's restrictor (world_model.entities_of_kind) and checks the relation between chosen pairs against real recorded facts
+        (world_model.holds_relationally, core/pipeline.py's _record_relational_fact_if_applicable is what populates it), a genuine truth check, not
+        the permissive relational-predicate fallback a 2+-quantifier sentence got before this existed.
+
+        Deliberately scoped to exactly the shape core/parser.py can currently produce: two quantifiers, two arguments, each quantifier's restrictor
+        matching its positionally-corresponding argument (guaranteed by construction, both _collect_stored_quantifiers and argument extraction walk
+        the sentence left-to-right). Anything else falls back to the ordinary standard-predicate evaluator (returning None for the scope payload, since
+        no real scoped evaluation ran) rather than guessing at a generalization nothing can parse or test yet.
+
+        Scope-reading choice: enumerate_scope_readings(quantifiers)[0] is used as the sentence's truth-conditional claim. itertools.permutations
+        always yields the input (surface, left-to-right) order first (a real, provable property, not an assumption) so this is the standard,
+        unmarked surface-scope reading, used here as a default, not as scope-ambiguity RESOLUTION: every reading enumerate_scope_readings finds is
+        still attached to the returned payload (`quantifier_scope`) for a later, separate layer to actually choose between.
+        """
+        quantifiers = form.quantifier_store
+        arguments = form.arguments
+
+        shape_is_scopeable = (
+            len(quantifiers) == 2
+            and len(arguments) == 2
+            and all(isinstance(argument, str) for argument in arguments)
+            and quantifiers[0].restrictor.lower() == str(arguments[0]).lower()
+            and quantifiers[1].restrictor.lower() == str(arguments[1]).lower()
+        )
+        if not shape_is_scopeable:
+            return self._evaluate_standard_predicate(form), None
+
+        all_readings = enumerate_scope_readings(quantifiers)
+        surface_reading = all_readings[0]
+        position_by_restrictor = {quantifiers[0].restrictor.lower(): 0, quantifiers[1].restrictor.lower(): 1}
+
+        truth_value = self._evaluate_quantifier_chain(surface_reading, form.predicate, position_by_restrictor, {})
+
+        # An unapplied, symbolic template of the relation being checked (never beta-reduced: it's meant to show the general claim SHAPE, not one
+        # specific instantiation, since the walk above may check the relation against several different entity pairs, not just one).
+        relation_template = Application(
+            Application(Constant(form.predicate), Variable(quantifiers[0].bound_variable)),
+            Variable(quantifiers[1].bound_variable),
+        )
+
+        return truth_value, {
+            "store": quantifiers,
+            "surface_reading": surface_reading,
+            "reading_count": len(all_readings),
+            "claim": repr(relation_template),
+        }
+
+    def _evaluate_quantifier_chain(
+        self,
+        remaining_quantifiers: List[StoredQuantifier],
+        predicate: str,
+        position_by_restrictor: Dict[str, int],
+        assignment: Dict[int, str],
+    ) -> bool:
+        """
+        Recursively walks the quantifiers in `remaining_quantifiers` (outermost first), binding each one's variable to every actual entity of its
+        restrictor kind in turn (world_model.entities_of_kind) before moving to the next quantifier inward, exactly what "scope" means: an outer
+        FORALL's binding is fixed before an inner EXISTS's search even starts. Once every quantifier has bound a concrete entity, the base case
+        checks the fully-instantiated relation via _evaluate_relation.
+        """
+        if not remaining_quantifiers:
+            return self._evaluate_relation(predicate, assignment[0], assignment[1])
+
+        quantifier = remaining_quantifiers[0]
+        entities = self.world_model.entities_of_kind(quantifier.restrictor)
+        position = position_by_restrictor[quantifier.restrictor.lower()]
+
+        def _continue_with(entity: str) -> bool:
+            next_assignment = dict(assignment)
+            next_assignment[position] = entity
+            return self._evaluate_quantifier_chain(remaining_quantifiers[1:], predicate, position_by_restrictor, next_assignment)
+
+        if quantifier.operator == "FORALL":
+            return all(_continue_with(entity) for entity in entities)
+        if quantifier.operator == "EXISTS":
+            return any(_continue_with(entity) for entity in entities)
+        if quantifier.operator == "NOT_EXISTS":
+            return not any(_continue_with(entity) for entity in entities)
+
+        return True
+
+    def _evaluate_relation(self, predicate: str, subject: str, obj: str) -> bool:
+        """
+        Builds the curried claim \\y.\\x. PREDICATE(x)(y) and beta-reduces it, applied to the object then the subject, the exact curried-application
+        pattern tests/test_semantics.py's own hand-built KICK example already proves correct, now genuinely driving a live evaluation decision instead
+        of existing only for its own unit test: the check below reads its subject/object out of the REDUCED term's own Constants, not the strings
+        passed in, so a bug in beta_reduce/evaluate_term would actually break this rather than silently being bypassed.
+        """
+        relation = LambdaExpression("y", LambdaExpression("x", Application(Application(Constant(predicate), Variable("x")), Variable("y"))))
+        applied_to_object = beta_reduce(relation, Constant(obj))
+        fully_applied = evaluate_term(Application(applied_to_object, Constant(subject)))
+        # fully_applied == Application(Application(Constant(predicate), Constant(subject)), Constant(obj)), fully reduced.
+        reduced_subject = fully_applied.functor.argument.name
+        reduced_object = fully_applied.argument.name
+        return self.world_model.holds_relationally(predicate, reduced_subject, reduced_object)

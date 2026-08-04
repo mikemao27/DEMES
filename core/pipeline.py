@@ -26,7 +26,9 @@ WHAT ONE TURN ACTUALLY DOES, IN ORDER:
 
     7. Classify the utterance's speech act, and detect focus if a focus particle is present.
 
-    8. Compile and evaluate truth via SemanticCompiler; if the predicate was idiom-tagged during parsing, look up and attach its real (figurative.py) meaning to the payload.
+    8. Compile and evaluate truth via SemanticCompiler; if the predicate was idiom-tagged during parsing, look up and attach its real (figurative.py) meaning to the payload; if the
+    sentence is an ordinary (non-quantified, non-negated, two-argument) claim that evaluated true, record it as a binary relational fact in the world model, so a later
+    multi-quantifier sentence has something real to check its relation against.
 
     9. Record the utterance as an event on the world model's episodic timeline.
 
@@ -120,6 +122,7 @@ class DEMESPipeline:
         conjunct_payloads = [self.compiler.compile_and_evaluate(conjunct) for conjunct in conjuncts]
         for conjunct, payload in zip(conjuncts, conjunct_payloads):
             self._attach_idiom_meaning(conjunct, payload)
+            self._record_relational_fact_if_applicable(conjunct, payload)
             self.world_model.record_event(conjunct.predicate, roles = {}, tense = conjunct.tense)
 
         modal_context = self._open_modal_attitude_context(representative_form)
@@ -365,3 +368,26 @@ class DEMESPipeline:
                 "frame": idiom_meaning.explication.frame.value,
                 "slots": idiom_meaning.explication.slots,
             }
+
+    # Relational fact recording: leaving behind real binary facts for later multi-quantifier evaluation to check against.
+    def _record_relational_fact_if_applicable(self, logical_form, semantic_payload: Dict[str, Any]) -> None:
+        """
+        Writes an ordinary sentence's claim into world_model's relational fact store (core/world_model.py's assert_relational_fact) so a LATER
+        multi-quantifier sentence ("every student read a book") has something real to check its relation against, instead of that check staying
+        permissively true forever. Deliberately narrow: only a non-quantified, non-negated, exactly-two-plain-string-argument sentence that actually
+        evaluated true corresponds to one single (subject, object) pair unambiguously: a quantified sentence's truth doesn't correspond to any one
+        pair, and a negated or false sentence doesn't correspond to a pair holding at all, so both are correctly left unrecorded rather than writing
+        something misleading.
+        """
+        if semantic_payload.get("status") != "success" or not semantic_payload.get("truth_value"):
+            return
+        if logical_form.quantifier_store or logical_form.is_negated:
+            return
+        if len(logical_form.arguments) != 2:
+            return
+        subject, obj = logical_form.arguments
+        
+        if not isinstance(subject, str) or not isinstance(obj, str):
+            return
+
+        self.world_model.assert_relational_fact(logical_form.predicate, subject, obj)

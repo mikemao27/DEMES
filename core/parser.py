@@ -779,7 +779,9 @@ class ChartParser:
         Finds every quantifier word in the tree and, for each, the noun it combined with to form an NP (its restrictor): by looking at the quantifier leaf's parent node (built via
         forward application, NP/N + N -> NP) and taking whichever sibling isn't the quantifier itself. context_id stays "global" for now; giving each stored quantifier a context tied to
         an actual opened Modal & Attitude context is what the 5a/6d intensional-scope coupling needs, and that depends on clausal complements existing at all (a later grammar step):
-        not something this step can meaningfully do yet.
+        not something this step can meaningfully do yet. Each quantifier found gets its OWN bound variable name ("x0", "x1", ...), not a shared "x": a sentence with two quantifiers
+        ("every student read a book") needs two genuinely distinct variables to bind independently once something actually evaluates nested scope (core/semantics.py's
+        _evaluate_scoped_quantifiers): reusing the same name for both would make them collide the instant that happens.
         """
         stored: List[StoredQuantifier] = []
         for leaf in leaves:
@@ -793,11 +795,11 @@ class ChartParser:
 
             if restrictor_leaf is None:
                 continue
-            
+
             stored.append(StoredQuantifier(
                 operator = QUANTIFIERS[leaf.token],
                 restrictor = restrictor_leaf.token.upper(),
-                bound_variable = "x",
+                bound_variable = f"x{len(stored)}",
                 context_id = "global",
             ))
 

@@ -277,6 +277,17 @@ class TestChartParserEndToEnd(unittest.TestCase):
         operators_by_restrictor = {q.restrictor: q.operator for q in form.quantifier_store}
         self.assertEqual(operators_by_restrictor, {"STUDENT": "FORALL", "BOOK": "EXISTS"})
 
+    def test_two_quantifiers_get_distinct_bound_variables(self):
+        # A real bug this test locks in: both quantifiers used to hardcode bound_variable = "x", which would collide the instant something tries to
+        # bind them independently (core/semantics.py's _evaluate_scoped_quantifiers, Phase 3).
+        form = self.parser.parse("Every student read a book.")
+        variables = [q.bound_variable for q in form.quantifier_store]
+        self.assertEqual(len(variables), len(set(variables)))
+
+    def test_single_quantifier_still_gets_a_bound_variable(self):
+        form = self.parser.parse("Every suitcase is portable.")
+        self.assertEqual(form.quantifier_store[0].bound_variable, "x0")
+
     def test_plural_noun_is_tagged(self):
         form = self.parser.parse("The suitcases is portable.")
         self.assertIn("suitcases", form.plural_arguments)
