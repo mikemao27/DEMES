@@ -209,6 +209,13 @@ COPULA_PAST = {"was", "were"}
 NEGATION_WORDS = {"not", "never"}
 FUTURE_MARKERS = {"will"}
 PAST_AUX = {"did"}
+
+# "Had" + a past participle ("John HAD LEFT by the time Mary arrived"): the pluperfect. Gets the exact same PREDICATE_MODIFIER category copulas/"did"
+# already have below (combining through entirely existing machinery, no new category), but is tracked as its own closed set so _detect_tense can tell
+# it apart from an ordinary simple past ("was"/"did"): core/world_model.py's EventRecord.is_pluperfect() has been correct and tested since the original
+# build but had nothing real to classify until this existed. Deliberately doesn't attempt "had been" (pluperfect PASSIVE, "had been kicked"): "been"
+# isn't a recognized word at all yet, and adding it is a separate, not-yet-decided piece of grammar work.
+PLUPERFECT_AUX = {"had"}
 COMPARISON_MARKERS = {"than"}
 FOCUS_PARTICLES = {"only", "even"}
 
@@ -237,7 +244,7 @@ PASSIVE_AGENT_MARKERS = {"by"}
 WH_WORDS = {"who", "what"}
 
 _DETERMINER_LIKE = set(QUANTIFIERS) | DETERMINERS
-_PREDICATE_MODIFIER_WORDS = COPULA_PRESENT | COPULA_PAST | NEGATION_WORDS | FUTURE_MARKERS | PAST_AUX
+_PREDICATE_MODIFIER_WORDS = COPULA_PRESENT | COPULA_PAST | NEGATION_WORDS | FUTURE_MARKERS | PAST_AUX | PLUPERFECT_AUX
 _FUNCTION_WORDS = (
     _DETERMINER_LIKE | _PREDICATE_MODIFIER_WORDS | COMPARISON_MARKERS | FOCUS_PARTICLES | SUBORDINATORS
     | COMPLEMENTIZER_WORDS | set(COORDINATORS) | PASSIVE_AGENT_MARKERS
@@ -276,6 +283,32 @@ def get_coordination_conjuncts(root: Optional[DerivationNode]) -> Optional[Tuple
     if root is None or len(root.children) != 3 or not root.children[1].is_leaf() or root.children[1].token not in COORDINATORS:
         return None
     return (root.children[0], root.children[2])
+
+def find_np_coordination_members(root: Optional[DerivationNode]) -> Optional[Tuple[str, str]]:
+    """
+    Walks the WHOLE tree (not just the root, unlike get_coordination_conjuncts above: this coordination is typically nested one level down, inside a
+    subject NP, not at the top of the sentence) for a coordination node whose two conjuncts are each a single leaf with plain NP category: "Alice and
+    Bob walked" is exactly this shape, and Phase 2.4's coordination rule already parses it without any new grammar (two proper nouns/pronouns are both
+    already NP-category leaves, so the ternary coordination rule fires on them the same way it fires on any other matching pair). Deliberately narrow:
+    only this simple two-name shape is recognized, not "the students and the teachers" (each conjunct there is a full NP built from a determiner, not
+    a single leaf) and not three-way chains: returns the first such match found, or None. This is what lets core/pipeline.py enumerate a plural sum
+    entity's real members (world_model.join_entities) instead of leaving it permanently unenumerated.
+    """
+    if root is None:
+        return None
+
+    conjuncts = get_coordination_conjuncts(root)
+    if conjuncts is not None:
+        left, right = conjuncts
+        if left.is_leaf() and right.is_leaf() and left.label == repr(NP) and right.label == repr(NP):
+            return (left.token, right.token)
+
+    for child in root.children:
+        found = find_np_coordination_members(child)
+        if found is not None:
+            return found
+
+    return None
 
 def get_coordinator_connective(root: Optional[DerivationNode]) -> Optional[str]:
     """
@@ -833,9 +866,11 @@ class ChartParser:
 
     def _detect_tense(self, leaves: List[DerivationNode]) -> str:
         tokens_present = {leaf.token for leaf in leaves}
+        if tokens_present & PLUPERFECT_AUX:
+            return "pluperfect"
         if tokens_present & (COPULA_PAST | PAST_AUX):
             return "past"
         if tokens_present & FUTURE_MARKERS:
             return "future"
-        
+
         return "present"

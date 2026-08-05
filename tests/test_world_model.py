@@ -113,6 +113,20 @@ class TestEpisodicTimeline(unittest.TestCase):
         record = self.world_model.record_event("ARRIVE", {}, tense = "future")
         self.assertGreater(record.event_time, record.speech_time)
 
+    def test_pluperfect_event_gets_a_real_three_point_distinction_from_simple_past(self):
+        # EventRecord.is_pluperfect() has been correct and tested since the original build but had nothing real to classify until core/parser.py
+        # could detect "had" + participle as its own tense (Phase 4): this is that distinction actually reaching record_event.
+        self.world_model.advance_turn()
+        record = self.world_model.record_event("LEAVE", {}, tense = "pluperfect")
+        self.assertTrue(record.is_pluperfect())
+        self.assertLess(record.event_time, record.reference_time)
+        self.assertLess(record.reference_time, record.speech_time)
+
+    def test_simple_past_is_not_pluperfect(self):
+        self.world_model.advance_turn()
+        record = self.world_model.record_event("LEAVE", {}, tense = "past")
+        self.assertFalse(record.is_pluperfect())
+
     def test_event_is_appended_to_the_log(self):
         self.world_model.advance_turn()
         self.world_model.record_event("KICK", {"agent": "john", "patient": "ball"})

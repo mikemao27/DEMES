@@ -73,6 +73,16 @@ class TestStylistWithLexicon(_StylistLexiconFixture):
     def test_future_tense_uses_will_auxiliary(self):
         self.assertEqual(_realize_verb_phrase("walk", "future", is_negated = False), "will walk")
 
+    def test_pluperfect_tense_uses_had_auxiliary(self):
+        self.assertEqual(_realize_verb_phrase("walk", "pluperfect", is_negated = False), "had walk")
+
+    def test_negated_pluperfect_uses_had_not(self):
+        self.assertEqual(_realize_verb_phrase("walk", "pluperfect", is_negated = True), "had not walk")
+
+    def test_realize_pluperfect_sentence(self):
+        form = LogicalForm(predicate = "WALKED", arguments = ["john"], tense = "pluperfect")
+        self.assertEqual(realize_logical_form(form, self.lexicon), "John had walk.")
+
     def test_realize_predicative_adjective_sentence(self):
         form = LogicalForm(predicate = "PORTABLE", arguments = ["suitcase"])
         self.assertEqual(realize_logical_form(form, self.lexicon), "The suitcase is portable.")

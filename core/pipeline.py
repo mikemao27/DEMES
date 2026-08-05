@@ -28,8 +28,9 @@ WHAT ONE TURN ACTUALLY DOES, IN ORDER:
 
     8. Compile and evaluate truth via SemanticCompiler; if the predicate was idiom-tagged during parsing, look up and attach its real (figurative.py) meaning to the payload; if the
     predicate declares a selectional requirement for an argument position that the actual argument doesn't literally satisfy, attempt metonymic/metaphorical repair and attach it
-    if one applies; if the sentence is an ordinary (non-quantified, non-negated, two-argument) claim that evaluated true, record it as a binary relational fact in the world model,
-    so a later multi-quantifier sentence has something real to check its relation against.
+    if one applies; if the sentence is the copula-identity-relation shape ("Bob is an employee"), write it into the Episodic Fact Graph as an IS_A fact; if the sentence is an
+    ordinary (non-quantified, non-negated, two-argument) claim that evaluated true, record it as a binary relational fact in the world model, so a later multi-quantifier sentence
+    has something real to check its relation against.
 
     9. Record the utterance as an event on the world model's episodic timeline.
 
@@ -54,9 +55,9 @@ and doesn't cover.
 
 from typing import Dict, Any, List, Optional
 
-from core.types import LogicalForm, ModalFlavor
+from core.types import LogicalForm, ModalFlavor, FrameTemplate
 from core.lexicon import LexiconManager
-from core.parser import ChartParser, get_pronoun_features, get_coordinator_connective, get_coordination_conjuncts, WH_WORDS
+from core.parser import ChartParser, get_pronoun_features, get_coordinator_connective, get_coordination_conjuncts, find_np_coordination_members, WH_WORDS
 from core.world_model import WorldModel
 from core.world_model import get_presupposition_trigger as _get_presupposition_trigger
 from core.semantics import SemanticCompiler
@@ -110,8 +111,11 @@ class DEMESPipeline:
         conjuncts: List[LogicalForm] = parsed_form if is_coordinated else ([parsed_form] if parsed_form else [])
         representative_form = conjuncts[0] if conjuncts else None
 
-        for conjunct in conjuncts:
-            self._register_noun_arguments(conjunct)
+        conjunct_trees = get_coordination_conjuncts(derivation_tree) if is_coordinated else None
+        for index, conjunct in enumerate(conjuncts):
+            conjunct_tree = conjunct_trees[index] if conjunct_trees is not None else derivation_tree
+            self._register_noun_arguments(conjunct, conjunct_tree)
+        
         cataphora_resolutions = self._resolve_pronoun_arguments(conjuncts, derivation_tree)
 
         accommodated_presuppositions = self._check_presuppositions(tokens, representative_form)
@@ -124,6 +128,7 @@ class DEMESPipeline:
         for conjunct, payload in zip(conjuncts, conjunct_payloads):
             self._attach_idiom_meaning(conjunct, payload)
             self._attach_figurative_repair(conjunct, payload)
+            self._consult_episodic_fact_graph(conjunct, payload)
             self._record_relational_fact_if_applicable(conjunct, payload)
             self.world_model.record_event(conjunct.predicate, roles = {}, tense = conjunct.tense)
 
@@ -229,13 +234,19 @@ class DEMESPipeline:
         return {"predicate": entry.predicate, "arguments": entry.arguments, "open_slot_index": entry.open_slot_index}
 
     # Discourse referents and pronoun resolution.
-    def _register_noun_arguments(self, logical_form) -> None:
+    def _register_noun_arguments(self, logical_form, derivation_tree = None) -> None:
         """
         Registers any argument that is itself a lexicon noun as a fresh discourse referent, using the arguments
         exactly as the parser produced them: a bare pronoun token like "it" isn't a lexicon entry at all (see core/parser.py's PRONOUNS table),
         so this step naturally never mistakes a pronoun for a new noun mention. An argument the parser flagged as grammatically plural
         (logical_form.plural_arguments) is additionally registered as a plural entity (core/world_model.py's Link's-lattice support) rather
         than an ordinary atomic one: see WorldModel.register_entity's own docstring for the honest limit on what that captures.
+
+        If `derivation_tree` (this logical_form's own subtree: process_utterance passes the matching conjunct subtree for a coordinated sentence,
+        the same way it already does for _resolve_pronoun_arguments) contains an NP-level coordination of two simple names ("Alice and Bob walked":
+        Phase 2.4's coordination rule already parses this without any new grammar), joins them into a real Link's-lattice sum entity
+        (world_model.join_entities) with actual members, instead of leaving a plural mention permanently unenumerated. Proper nouns are never touched
+        by the ordinary per-argument loop above (it only registers arguments whose lexicon category is "noun"), so this is purely additive.
         """
         for argument in logical_form.arguments:
             entry = self.lexicon.get_word_definition(str(argument))
@@ -243,6 +254,10 @@ class DEMESPipeline:
                 self.world_model.register_referent(str(argument), "noun", properties = [logical_form.predicate.lower()])
                 if str(argument) in logical_form.plural_arguments:
                     self.world_model.register_entity(str(argument), kind = str(argument), is_sum = True)
+
+        coordinated_members = find_np_coordination_members(derivation_tree)
+        if coordinated_members is not None:
+            self.world_model.join_entities(list(coordinated_members))
 
     def _resolve_pronoun_arguments(self, logical_forms: List, derivation_tree) -> List[Dict[str, str]]:
         """
@@ -414,6 +429,36 @@ class DEMESPipeline:
                     "resolution": resolution,
                 }
                 return
+
+    # Episodic Fact Graph consultation, scoped to the copula-identity-relation shape ("Bob is an employee").
+    def _consult_episodic_fact_graph(self, logical_form, semantic_payload: Dict[str, Any]) -> None:
+        """
+        The only sentence shape core/parser.py can currently produce that naturally maps onto one of the Episodic Fact Graph's closed FrameTemplate
+        relations is the copula-identity-relation extraction from Phase 2.6 (predicate literally "IS", two plain NPs): "Bob works at Google" or
+        "Seattle is in Washington" would need locative/affiliation PP-attachment grammar that doesn't exist yet, so this stays scoped to IS_A. Checks
+        world_model.query_episodic_fact BEFORE writing, so the payload can honestly report whether this was new information or already known, then
+        always calls assert_episodic_fact: this is the actual "discourse-driven assertion" the Episodic Fact Graph was designed for (see
+        core/world_model.py's own module docstring): a stated declarative fact gets written the moment it's uttered. Deliberately does not redirect
+        truth_value: IS_A isn't exclusive in real language ("Bob is an employee" and "Bob is a manager" can both be true), so there's nothing sound to
+        falsify against, the same "attach an explanation, never redirect evaluation" precedent _attach_idiom_meaning/_attach_figurative_repair set.
+        """
+        if not logical_form or semantic_payload.get("status") != "success" or not semantic_payload.get("truth_value"):
+            return
+        if logical_form.predicate != "IS" or logical_form.is_negated:
+            return
+        if len(logical_form.arguments) != 2 or not all(isinstance(argument, str) for argument in logical_form.arguments):
+            return
+
+        subject, obj = logical_form.arguments
+        already_known = self.world_model.query_episodic_fact(FrameTemplate.IS_A, subject, obj) is not None
+        self.world_model.assert_episodic_fact(FrameTemplate.IS_A, subject, obj)
+
+        semantic_payload["episodic_fact"] = {
+            "relation": FrameTemplate.IS_A.value,
+            "subject": subject,
+            "object": obj,
+            "already_known": already_known,
+        }
 
     # Relational fact recording: leaving behind real binary facts for later multi-quantifier evaluation to check against.
     def _record_relational_fact_if_applicable(self, logical_form, semantic_payload: Dict[str, Any]) -> None:

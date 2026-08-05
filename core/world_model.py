@@ -218,7 +218,7 @@ class WorldModel:
             else:
                 members.append(entity_id)
 
-        sum_id = "+".join(sorted(set(members)))
+        sum_id = " + ".join(sorted(set(members)))
         if sum_id not in self.entities:
             first_member = self.entities.get(members[0])
             kind = first_member.kind if first_member else "UNKNOWN"
@@ -250,13 +250,18 @@ class WorldModel:
 
     def record_event(self, predicate: str, roles: Dict[str, str], tense: str = "present", aktionsart = None) -> EventRecord:
         """
-        Adds an event or state to the episodic timeline, deriving a Reichenbach speech/reference/event-time triple from the sentence's tense. 
-        This is a coarse mapping honestly: a flat "past"/"present"/"future" label (all core/parser.py currently detects) can't distinguish
-        pluperfect from simple past the way real Reichenbach analysis requires: that needs the parser to recognize richer tense/aspect marking 
-        than it does today. What's implemented here is correct for the tense distinctions actually available right now.
+        Adds an event or state to the episodic timeline, deriving a Reichenbach speech/reference/event-time triple from the sentence's tense.
+        "Pluperfect" (core/parser.py recognizes "had" + participle as its own tense, Phase 4) gets a real three-point distinction from simple past:
+        event_time strictly before reference_time strictly before speech_time ("Mary HAD LEFT (event) by the time John arrived (reference), and both
+        are before now"), exactly what EventRecord.is_pluperfect() checks for, simple past only ever collapses event_time and reference_time
+        together, since core/parser.py has no way to detect a separate reference point for it. What's implemented here is correct for every tense
+        distinction actually available right now; a still-honest gap remains for aspect marking beyond these ("was leaving", the progressive-overlap
+        case EventRecord.is_progressive_overlap() already anticipates), which core/parser.py doesn't detect at all yet.
         """
         speech_time = self.current_turn
-        if tense == "past":
+        if tense == "pluperfect":
+            event_time, reference_time = speech_time - 2, speech_time - 1
+        elif tense == "past":
             event_time, reference_time = speech_time - 1, speech_time
         elif tense == "future":
             event_time, reference_time = speech_time + 1, speech_time

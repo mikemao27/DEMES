@@ -8,6 +8,7 @@ import os
 import shutil
 
 from core.pipeline import DEMESPipeline
+from core.types import FrameTemplate
 
 class TestPipelineBase(unittest.TestCase):
     def setUp(self):
@@ -57,6 +58,12 @@ class TestBasicTurn(TestPipelineBase):
         self.assertEqual(self.pipeline.world_model.current_turn, 1)
         self.assertEqual(len(self.pipeline.world_model.event_log), 1)
 
+    def test_pluperfect_sentence_records_a_real_pluperfect_event(self):
+        # Phase 4, Sub-step C3: "had" + participle reaches core/world_model.py's EventRecord.is_pluperfect() from a real parse for the first time.
+        result = self.pipeline.process_utterance("John had kicked the bucket.")
+        self.assertEqual(result["logical_form"].tense, "pluperfect")
+        self.assertTrue(self.pipeline.world_model.event_log[-1].is_pluperfect())
+
     def test_unparsable_sentence_fails_gracefully(self):
         result = self.pipeline.process_utterance("Quantum mechanics is weird")
         self.assertIsNone(result["logical_form"])
@@ -91,6 +98,33 @@ class TestNounRegistrationAndPronounResolution(TestPipelineBase):
     def test_singular_noun_mention_is_not_registered_as_an_entity(self):
         self.pipeline.process_utterance("The suitcase is portable.")
         self.assertNotIn("suitcase", self.pipeline.world_model.entities)
+
+class TestLinksLatticeIntegration(TestPipelineBase):
+    """
+    Phase 4, Sub-step C2: an NP-coordinated subject ("John and Mary walked") gets joined into a real Link's-lattice sum entity with actual members,
+    reachable from a real parse for the first time, core/world_model.py's join_entities/holds_collectively/holds_distributively were already correct
+    and tested standalone, but always had to be constructed by hand since a bare plural mention alone never enumerates real individuals.
+    """
+    def setUp(self):
+        super().setUp()
+        self.pipeline.lexicon.lexicon["mary"] = {"category": "proper_noun", "semantic_type": "e", "primitives": [], "valency": "none"}
+
+    def test_coordinated_subject_is_joined_into_a_real_sum_entity(self):
+        self.pipeline.process_utterance("John and Mary walked.")
+        entity = self.pipeline.world_model.entities.get("john + mary")
+        self.assertIsNotNone(entity)
+        self.assertTrue(entity.is_sum)
+        self.assertEqual(entity.members, ["john", "mary"])
+
+    def test_the_new_sum_entity_is_usable_by_holds_distributively(self):
+        self.pipeline.process_utterance("John and Mary walked.")
+        entity = self.pipeline.world_model.entities["john + mary"]
+        self.pipeline.world_model.knowledge_base["walked"] = ["john", "mary"]
+        self.assertTrue(self.pipeline.world_model.holds_distributively("walked", entity))
+
+    def test_ordinary_non_coordinated_sentence_creates_no_sum_entity(self):
+        self.pipeline.process_utterance("John walked.")
+        self.assertEqual(self.pipeline.world_model.entities, {})
 
 class TestCataphoraIntegration(TestPipelineBase):
     """
@@ -369,9 +403,55 @@ class TestFigurativeRepairIntegration(TestPipelineBase):
         self.assertIn("figurative_repair", result["semantics"])
         self.assertTrue(result["semantics"]["truth_value"]) # "leave" is untracked in knowledge_base: permissive default, unaffected by the repair.
 
+class TestEpisodicFactGraphIntegration(TestPipelineBase):
+    """
+    Phase 4, Sub-step C1: the copula-identity-relation shape ("Bob is an employee") is the only sentence shape core/parser.py can currently produce
+    that naturally maps onto one of the Episodic Fact Graph's closed FrameTemplate relations: reachable and inspectable from a real turn for the
+    first time, via a new IS_A write-then-query consultation in core/pipeline.py.
+    """
+    def setUp(self):
+        super().setUp()
+        self.pipeline.lexicon.lexicon["bob"] = {"category": "proper_noun", "semantic_type": "e", "primitives": [], "valency": "none"}
+        self.pipeline.lexicon.lexicon["employee"] = {"category": "noun", "semantic_type": "e", "primitives": [{"name": "PEOPLE", "category": "entity"}], "valency": "none"}
+        self.pipeline.lexicon.lexicon["manager"] = {"category": "noun", "semantic_type": "e", "primitives": [{"name": "PEOPLE", "category": "entity"}], "valency": "none"}
+
+    def test_first_mention_is_written_and_flagged_new(self):
+        result = self.pipeline.process_utterance("Bob is an employee.")
+        self.assertEqual(result["semantics"]["episodic_fact"], {
+            "relation": "IS-A", "subject": "bob", "object": "employee", "already_known": False,
+        })
+
+    def test_fact_is_actually_queryable_afterward(self):
+        self.pipeline.process_utterance("Bob is an employee.")
+        fact = self.pipeline.world_model.query_episodic_fact(FrameTemplate.IS_A, "bob", "employee")
+        self.assertIsNotNone(fact)
+
+    def test_repeated_mention_is_flagged_already_known(self):
+        self.pipeline.process_utterance("Bob is an employee.")
+        result = self.pipeline.process_utterance("Bob is an employee.")
+        self.assertTrue(result["semantics"]["episodic_fact"]["already_known"])
+
+    def test_a_different_object_for_the_same_subject_is_still_new(self):
+        # IS_A isn't exclusive: "Bob is an employee" and "Bob is a manager" can both independently be true and both get recorded.
+        self.pipeline.process_utterance("Bob is an employee.")
+        result = self.pipeline.process_utterance("Bob is a manager.")
+        self.assertFalse(result["semantics"]["episodic_fact"]["already_known"])
+        self.assertIsNotNone(self.pipeline.world_model.query_episodic_fact(FrameTemplate.IS_A, "bob", "employee"))
+        self.assertIsNotNone(self.pipeline.world_model.query_episodic_fact(FrameTemplate.IS_A, "bob", "manager"))
+
+    def test_ordinary_verb_predicate_is_untouched(self):
+        result = self.pipeline.process_utterance("John kicked the bucket.")
+        self.assertNotIn("episodic_fact", result["semantics"])
+
+    def test_truth_value_is_unaffected_by_the_consultation(self):
+        # Purely an annotation, the same non-invasive precedent idiom/figurative-repair attachment already set.
+        result = self.pipeline.process_utterance("Bob is an employee.")
+        self.assertIn("episodic_fact", result["semantics"])
+        self.assertTrue(result["semantics"]["truth_value"])
+
 class TestRelationalFactIntegration(TestPipelineBase):
     """
-    Phase 3, Sub-step A1: an ordinary true two-argument claim leaves behind a real binary fact (core/world_model.py's relational_facts), so a later 
+    Phase 3, Sub-step A1: an ordinary true two-argument claim leaves behind a real binary fact (core/world_model.py's relational_facts), so a later
     multi-quantifier sentence has something real to check its relation against instead of staying permissively true forever.
     """
     def setUp(self):

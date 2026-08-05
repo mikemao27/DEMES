@@ -32,7 +32,7 @@ from typing import Any, Dict, List, Optional, Union
 from core.types import LogicalForm
 from core.parser import WH_WORDS
 
-_COPULA_FOR_TENSE: Dict[str, str] = {"present": "is", "past": "was", "future": "will be"}
+_COPULA_FOR_TENSE: Dict[str, str] = {"present": "is", "past": "was", "future": "will be", "pluperfect": "had been"}
 _QUANTIFIER_SURFACE_WORDS: Dict[str, str] = {"FORALL": "every", "EXISTS": "some", "NOT_EXISTS": "no"}
 _CONNECTIVE_SURFACE_WORDS: Dict[str, str] = {"AND": "and", "OR": "or"}
 
@@ -79,12 +79,15 @@ def _realize_verb_phrase(verb_lemma: str, tense: str, is_negated: bool) -> str:
     """
     Builds a grammatically correct verb phrase without needing a full generative conjugation system: present tense gets the closed, reversible "-s" suffix rule; past and future both use
     an auxiliary ("did"/"will") plus the bare verb, which is always grammatical even for irregular verbs ("John did go", not the wrong "*johned goed"), at the cost of sounding a little more
-    formal than the simple past ("went") would. That gap in naturalness is exactly what the neural polish pass below exists to smooth over when a model is available: the symbolic layer's job is
+    formal than the simple past ("went") would. Pluperfect (core/parser.py's Phase 4 "had" + participle detection) uses "had" the same way: "had leave", not "had left", for the exact same
+    irregular-conjugation-avoiding reason. That gap in naturalness is exactly what the neural polish pass below exists to smooth over when a model is available: the symbolic layer's job is
     to always be correct, not to always be the most idiomatic phrasing. Only for an ACTIVE verb: a passive participle is realized by _realize_passive below instead, which needs a plain copula
-    ("was kicked"), not this did/will auxiliary pattern. `verb_lemma` MUST already be the base form ("kick", not "kicked"/"kicks"): core/parser.py's LogicalForm.predicate is always the
+    ("was kicked"), not this did/will/had auxiliary pattern. `verb_lemma` MUST already be the base form ("kick", not "kicked"/"kicks"): core/parser.py's LogicalForm.predicate is always the
     verb's literal SURFACE token as it appeared in the sentence, not a lemma, so every caller here lemmatizes it first (lexicon.lemmatize): skipping that step is what used to double-inflect
     an already-inflected surface form into things like "kickeds".
     """
+    if tense == "pluperfect":
+        return f"had not {verb_lemma}" if is_negated else f"had {verb_lemma}"
     if tense == "past":
         return f"did not {verb_lemma}" if is_negated else f"did {verb_lemma}"
     if tense == "future":

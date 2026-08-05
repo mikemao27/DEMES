@@ -19,7 +19,7 @@ from core.parser import (
     type_raise,
     supertag_content_word, supertag_function_word,
     get_pronoun_features,
-    get_coordination_conjuncts, get_coordinator_connective,
+    get_coordination_conjuncts, get_coordinator_connective, find_np_coordination_members,
     find_parent, c_commands, collect_leaves, check_npi_licensing,
     ChartParser,
 )
@@ -257,6 +257,16 @@ class TestChartParserEndToEnd(unittest.TestCase):
         form = self.parser.parse("John will kick the ball.")
         self.assertEqual(form.tense, "future")
 
+    def test_pluperfect_had_plus_participle_is_detected(self):
+        form = self.parser.parse("John had kicked the ball.")
+        self.assertEqual(form.tense, "pluperfect")
+        self.assertEqual(form.predicate, "KICKED")
+
+    def test_pluperfect_negation_is_detected(self):
+        form = self.parser.parse("John had not kicked the ball.")
+        self.assertEqual(form.tense, "pluperfect")
+        self.assertTrue(form.is_negated)
+
     def test_quantified_sentence(self):
         form = self.parser.parse("Every suitcase is portable.")
         self.assertEqual(form.quantifier_meta["operator"], "FORALL")
@@ -484,6 +494,22 @@ class TestCoordination(unittest.TestCase):
         self.assertIsInstance(form, list)
         self.assertTrue(form[0].is_negated)
         self.assertFalse(form[1].is_negated)
+
+    def test_np_level_subject_coordination_of_two_names_is_found(self):
+        # "John and Mary walked", the coordination is nested one level down (inside the subject NP), not at the top of the sentence (the sentence's
+        # own predicate, WALKED, is singular): find_np_coordination_members has to walk the whole tree, not just check the root.
+        _form, tree = self.parser.parse_with_derivation("John and Mary walked.")
+        self.assertEqual(find_np_coordination_members(tree), ("john", "mary"))
+
+    def test_ordinary_sentence_has_no_np_coordination(self):
+        _form, tree = self.parser.parse_with_derivation("John walked.")
+        self.assertIsNone(find_np_coordination_members(tree))
+
+    def test_common_noun_coordination_with_determiners_is_not_matched(self):
+        # "the suitcase or the trophy", each conjunct is a full NP built from a determiner, not a single leaf: deliberately out of this narrow
+        # mechanism's scope (it only recognizes two bare names/pronouns coordinating directly).
+        _form, tree = self.parser.parse_with_derivation("The suitcase or the trophy is heavy.")
+        self.assertIsNone(find_np_coordination_members(tree))
 
 class TestPassiveVoice(unittest.TestCase):
     """
