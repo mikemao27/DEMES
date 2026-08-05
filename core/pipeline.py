@@ -27,8 +27,9 @@ WHAT ONE TURN ACTUALLY DOES, IN ORDER:
     7. Classify the utterance's speech act, and detect focus if a focus particle is present.
 
     8. Compile and evaluate truth via SemanticCompiler; if the predicate was idiom-tagged during parsing, look up and attach its real (figurative.py) meaning to the payload; if the
-    sentence is an ordinary (non-quantified, non-negated, two-argument) claim that evaluated true, record it as a binary relational fact in the world model, so a later
-    multi-quantifier sentence has something real to check its relation against.
+    predicate declares a selectional requirement for an argument position that the actual argument doesn't literally satisfy, attempt metonymic/metaphorical repair and attach it
+    if one applies; if the sentence is an ordinary (non-quantified, non-negated, two-argument) claim that evaluated true, record it as a binary relational fact in the world model,
+    so a later multi-quantifier sentence has something real to check its relation against.
 
     9. Record the utterance as an event on the world model's episodic timeline.
 
@@ -59,7 +60,7 @@ from core.parser import ChartParser, get_pronoun_features, get_coordinator_conne
 from core.world_model import WorldModel
 from core.world_model import get_presupposition_trigger as _get_presupposition_trigger
 from core.semantics import SemanticCompiler
-from core.figurative import rewrite_idiom
+from core.figurative import rewrite_idiom, resolve_figurative_meaning
 from core.discourse import (
     classify_speech_act,
     resolve_pronoun_with_agreement,
@@ -122,6 +123,7 @@ class DEMESPipeline:
         conjunct_payloads = [self.compiler.compile_and_evaluate(conjunct) for conjunct in conjuncts]
         for conjunct, payload in zip(conjuncts, conjunct_payloads):
             self._attach_idiom_meaning(conjunct, payload)
+            self._attach_figurative_repair(conjunct, payload)
             self._record_relational_fact_if_applicable(conjunct, payload)
             self.world_model.record_event(conjunct.predicate, roles = {}, tense = conjunct.tense)
 
@@ -351,23 +353,67 @@ class DEMESPipeline:
                     tags.append(constraint)
         return tags
 
-    # Figurative repair (idiom half only: see core/figurative.py for why).
+    # Figurative repair, idiom half: a clean, unambiguous trigger (the parser's own idiom-gating already confirmed it).
     def _attach_idiom_meaning(self, logical_form, semantic_payload: Dict[str, Any]) -> None:
         """
-        If the parser tagged the predicate as an idiom ("IDIOM:kick_bucket"), attaches its real, NSM-grounded meaning to the payload. This is the one 
-        figurative.py mechanism with a clean, unambiguous trigger (the parser's own idiom-gating already confirmed it); metonymic coercion and metaphor 
-        mapping need a notion of a predicate's "required argument type" that nothing in the live pipeline computes yet, so they stay standalone for now (see the
-        architecture plan's tracking section).
+        If the parser tagged the predicate as an idiom ("IDIOM:kick_bucket"), attaches its real, NSM-grounded meaning to the payload.
         """
         if not logical_form or not logical_form.predicate.startswith("IDIOM:"):
             return
         idiom_meaning = rewrite_idiom(logical_form.predicate)
-        
+
         if idiom_meaning is not None:
             semantic_payload["idiom_meaning"] = {
                 "frame": idiom_meaning.explication.frame.value,
                 "slots": idiom_meaning.explication.slots,
             }
+
+    # Figurative repair, metonymy/metaphor half: opt-in, closed-vocabulary selectional requirements.
+    def _attach_figurative_repair(self, logical_form, semantic_payload: Dict[str, Any]) -> None:
+        """
+        If the predicate's own lexicon entry declares a "selectional_requirements" field (e.g. {"subject": "PERSON"} for "leave") for a position an
+        actual argument fills, and that argument's own "literal_type" doesn't already satisfy it, attempts metonymic or metaphorical repair
+        (core/figurative.py's resolve_figurative_meaning) for that one argument and, if one applies, attaches it to the payload: the same
+        non-invasive "attach an explanation, never redirect truth evaluation" pattern _attach_idiom_meaning already established above. A predicate
+        with no selectional_requirements declared (the overwhelming majority of the lexicon, and every verb tested before this existed) is completely
+        untouched: this only ever fires where a word's own entry opts in, never inferred from category or primitives alone, matching
+        core/figurative.py's own closed-registry discipline. Deliberately does NOT flip truth_value on an unrepaired mismatch: verbs have zero
+        selectional-restriction enforcement today, and turning that into real rejection is a bigger, separate decision than making this already-built,
+        already-tested mechanism reachable and inspectable for the first time.
+        """
+        if not logical_form:
+            return
+        predicate_lower = logical_form.predicate.lower()
+        predicate_def = self.lexicon.get_word_definition(predicate_lower)
+        requirements = (predicate_def or {}).get("selectional_requirements")
+        if not requirements:
+            return
+
+        # figurative.py's conceptual-metaphor registry is keyed by lemma ("DIGEST"), not the surface-inflected token core/parser.py sets as
+        # LogicalForm.predicate ("DIGESTED"): the same lemma-before-lookup step core/parser.py's own idiom-tagging already does.
+        predicate_lemma = (self.lexicon.lemmatize(predicate_lower) or predicate_lower).upper()
+
+        for position_name, argument_index in (("subject", 0), ("object", 1)):
+            required_type = requirements.get(position_name)
+            if required_type is None or argument_index >= len(logical_form.arguments):
+                continue
+            argument = logical_form.arguments[argument_index]
+            if not isinstance(argument, str):
+                continue
+
+            argument_entry = self.lexicon.get_word_definition(argument) or {}
+            if argument_entry.get("literal_type") == required_type:
+                continue # Already literally satisfies the requirement: nothing to repair.
+
+            resolution = resolve_figurative_meaning(predicate_lemma, required_type, [argument_entry])
+            if resolution is not None:
+                semantic_payload["figurative_repair"] = {
+                    "argument_position": position_name,
+                    "argument": argument,
+                    "required_type": required_type,
+                    "resolution": resolution,
+                }
+                return
 
     # Relational fact recording: leaving behind real binary facts for later multi-quantifier evaluation to check against.
     def _record_relational_fact_if_applicable(self, logical_form, semantic_payload: Dict[str, Any]) -> None:

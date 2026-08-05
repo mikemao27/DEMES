@@ -312,6 +312,63 @@ class TestIdiomIntegration(TestPipelineBase):
         literal_result = self.pipeline.process_utterance("John kicked the ball.")
         self.assertNotIn("idiom_meaning", literal_result["semantics"])
 
+class TestFigurativeRepairIntegration(TestPipelineBase):
+    """
+    Phase 3, Sub-step B1: metonymic coercion and metaphor mapping (core/figurative.py, correct and tested standalone since the original build)
+    reachable and inspectable from a real turn for the first time, via two new opt-in lexicon fields (selectional_requirements, literal_type).
+    Present tense throughout: "leave"'s past-tense form "left" isn't in core/lexicon.py's irregular-forms table yet (a separate, pre-existing,
+    already-flagged gap), so present tense is what actually exercises this without tripping over it.
+    """
+    def setUp(self):
+        super().setUp()
+        self.pipeline.lexicon.lexicon["john"]["literal_type"] = "PERSON"
+        self.pipeline.lexicon.lexicon["leave"] = {
+            "category": "verb", "semantic_type": "<e,t>", "primitives": [{"name": "MOVE", "category": "action"}],
+            "valency": "intransitive", "selectional_requirements": {"subject": "PERSON"},
+        }
+        self.pipeline.lexicon.lexicon["sandwich"] = {
+            "category": "noun", "semantic_type": "e", "primitives": [{"name": "SOMETHING", "category": "entity"}],
+            "valency": "none", "metonymy_licenses": ["container_for_person"],
+        }
+        self.pipeline.lexicon.lexicon["rock"] = {"category": "noun", "semantic_type": "e", "primitives": [{"name": "SOMETHING", "category": "entity"}], "valency": "none"}
+        self.pipeline.lexicon.lexicon["digest"] = {
+            "category": "verb", "semantic_type": "<e,<e,t>>", "primitives": [{"name": "DO", "category": "action"}],
+            "valency": "transitive", "selectional_requirements": {"object": "INFORMATION"},
+        }
+        self.pipeline.lexicon.lexicon["book"] = {
+            "category": "noun", "semantic_type": "e", "primitives": [{"name": "SOMETHING", "category": "entity"}],
+            "valency": "none", "conceptual_domain": "information",
+        }
+
+    def test_metonymy_is_reachable_from_a_real_parse(self):
+        result = self.pipeline.process_utterance("The sandwich leaves.")
+        self.assertEqual(result["semantics"]["figurative_repair"], {
+            "argument_position": "subject", "argument": "sandwich", "required_type": "PERSON", "resolution": "COERCED:PERSON",
+        })
+
+    def test_literal_subject_that_already_satisfies_the_requirement_has_no_repair(self):
+        result = self.pipeline.process_utterance("John leaves.")
+        self.assertNotIn("figurative_repair", result["semantics"])
+
+    def test_metaphor_is_reachable_from_a_real_parse(self):
+        result = self.pipeline.process_utterance("John digested the book.")
+        self.assertEqual(result["semantics"]["figurative_repair"]["resolution"], "COMPREHEND")
+
+    def test_genuinely_ungrounded_argument_gets_no_repair(self):
+        # "rock" licenses nothing: the closed-registry discipline holds through the live pipeline, not just figurative.py's own unit tests.
+        result = self.pipeline.process_utterance("The rock leaves.")
+        self.assertNotIn("figurative_repair", result["semantics"])
+
+    def test_predicate_with_no_declared_requirement_is_untouched(self):
+        result = self.pipeline.process_utterance("John kicked the bucket.")
+        self.assertNotIn("figurative_repair", result["semantics"])
+
+    def test_repair_never_changes_the_truth_value(self):
+        # Purely an annotation, the same non-invasive precedent idiom attachment already set: does not redirect evaluation.
+        result = self.pipeline.process_utterance("The sandwich leaves.")
+        self.assertIn("figurative_repair", result["semantics"])
+        self.assertTrue(result["semantics"]["truth_value"]) # "leave" is untracked in knowledge_base: permissive default, unaffected by the repair.
+
 class TestRelationalFactIntegration(TestPipelineBase):
     """
     Phase 3, Sub-step A1: an ordinary true two-argument claim leaves behind a real binary fact (core/world_model.py's relational_facts), so a later 
