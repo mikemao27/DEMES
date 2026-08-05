@@ -13,10 +13,10 @@ from core.discourse import (
     find_pronoun_and_name_leaves,
     SpeechActCategory, classify_speech_act,
     QUDEntry, QUDStack,
-    detect_focus,
     accommodate_presupposition,
     generate_scalar_implicature,
     RhetoricalRelation, classify_rhetorical_relation,
+    is_discourse_connective,
 )
 
 class TestPronounAgreement(unittest.TestCase):
@@ -162,6 +162,20 @@ class TestQUDStackAndFocus(unittest.TestCase):
         self.assertEqual(resolved.predicate, "FREE")
         self.assertEqual(resolved.arguments, ["you", "friday"])
 
+    def test_resolving_a_fragment_pops_the_entry(self):
+        # A question that's just been answered is no longer under discussion: a later, unrelated short utterance can't be mistaken for answering it again.
+        stack = QUDStack()
+        stack.push(QUDEntry(predicate = "FREE", arguments = ["you", "tuesday"], open_slot_index = 1))
+        stack.resolve_fragment(["friday"])
+        self.assertIsNone(stack.current())
+
+    def test_resolving_a_fragment_reveals_the_entry_underneath(self):
+        stack = QUDStack()
+        stack.push(QUDEntry(predicate = "FREE", arguments = ["you", "tuesday"], open_slot_index = 1))
+        stack.push(QUDEntry(predicate = "AVAILABLE", arguments = ["room"], open_slot_index = 0))
+        stack.resolve_fragment(["conference room"])
+        self.assertEqual(stack.current().predicate, "FREE")
+
     def test_entry_with_no_open_slot_resolves_nothing(self):
         stack = QUDStack()
         stack.push(QUDEntry(predicate = "FREE", arguments = ["you", "tuesday"], open_slot_index = None))
@@ -172,15 +186,6 @@ class TestQUDStackAndFocus(unittest.TestCase):
         stack.push(QUDEntry(predicate = "FREE", arguments = ["you", "tuesday"], open_slot_index = 1))
         stack.push(QUDEntry(predicate = "AVAILABLE", arguments = ["room"], open_slot_index = 0))
         self.assertEqual(stack.current().predicate, "AVAILABLE")
-
-    def test_detect_focus_finds_the_word_after_the_particle(self):
-        self.assertEqual(detect_focus(["only", "john", "left"]), "john")
-
-    def test_detect_focus_returns_none_without_a_particle(self):
-        self.assertIsNone(detect_focus(["john", "left"]))
-
-    def test_detect_focus_ignores_a_trailing_particle_with_nothing_after_it(self):
-        self.assertIsNone(detect_focus(["john", "left", "only"]))
 
 class TestPresuppositionAccommodation(unittest.TestCase):
     def setUp(self):
@@ -236,6 +241,16 @@ class TestRhetoricalRelationClassification(unittest.TestCase):
     def test_unclear_aktionsart_falls_back_to_elaboration(self):
         result = classify_rhetorical_relation(None, None)
         self.assertEqual(result, RhetoricalRelation.ELABORATION)
+
+class TestIsDiscourseConnective(unittest.TestCase):
+    def test_recognized_connective_lowercase(self):
+        self.assertTrue(is_discourse_connective("however"))
+
+    def test_recognized_connective_capitalized(self):
+        self.assertTrue(is_discourse_connective("However"))
+
+    def test_ordinary_word_is_not_a_connective(self):
+        self.assertFalse(is_discourse_connective("john"))
 
 if __name__ == "__main__":
     unittest.main()

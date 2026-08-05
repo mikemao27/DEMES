@@ -174,27 +174,18 @@ class QUDStack:
 
     def resolve_fragment(self, fragment_tokens: List[str]) -> Optional[LogicalForm]:
         """
-        Fills the current QUD entry's open slot with the fragment, returning a full LogicalForm, or None if there's nothing open to fill.
+        Fills the current QUD entry's open slot with the fragment, returning a full LogicalForm, or None if there's nothing open to fill. Pops the
+        resolved entry off the stack: a question that's just been answered is no longer under discussion, so a later, unrelated short utterance can't
+        be mistaken for answering the same (now-stale) question again.
         """
         entry = self.current()
         if entry is None or entry.open_slot_index is None:
             return None
-        
+
+        self._stack.pop()
         filled_arguments = list(entry.arguments)
         filled_arguments[entry.open_slot_index] = " ".join(fragment_tokens)
         return LogicalForm(predicate = entry.predicate, arguments = filled_arguments)
-
-FOCUS_PARTICLES = {"only", "even"}
-
-def detect_focus(tokens: List[str]) -> Optional[str]:
-    """
-    Returns the token immediately following a focus particle ("only", "even"), if present: a minimal, honest treatment of focus: it identifies WHAT's 
-    focused, not the fuller alternative-set/exhaustivity semantics real focus theory involves, which is real further work.
-    """
-    for index, token in enumerate(tokens):
-        if token in FOCUS_PARTICLES and index + 1 < len(tokens):
-            return tokens[index + 1]
-    return None
 
 # Presupposition accommodation.
 def accommodate_presupposition(
@@ -270,6 +261,15 @@ _CONNECTIVE_RELATIONS: Dict[str, RhetoricalRelation] = {
 }
 
 _EVENTIVE_AKTIONSART = {Aktionsart.ACHIEVEMENT, Aktionsart.ACCOMPLISHMENT}
+
+def is_discourse_connective(word: str) -> bool:
+    """
+    True if `word` is one of the closed cue phrases classify_rhetorical_relation's own connective table already recognizes ("but", "because", "so",
+    ...). Exposed as its own small lookup (the same style get_presupposition_trigger/get_coordinator_connective already use) so core/pipeline.py can
+    detect a sentence-initial discourse connective without needing to know _CONNECTIVE_RELATIONS' own internal shape: reuses that exact closed
+    vocabulary rather than inventing a second one.
+    """
+    return word.lower() in _CONNECTIVE_RELATIONS
 
 def classify_rhetorical_relation(
     first_aktionsart: Optional[Aktionsart],

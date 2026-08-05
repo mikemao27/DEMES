@@ -11,9 +11,10 @@ already exist.
 WHAT ONE TURN ACTUALLY DOES, IN ORDER:
     1. Advance the world model's turn clock (so this turn's events get the right relative timing).
 
-    2. Parse the utterance, keeping both the LogicalForm and the derivation tree.
+    2. Parse the utterance, keeping both the LogicalForm and the derivation tree. If it fails to parse at all, try resolving it as a bare fragment answer
+    (QUDStack.resolve_fragment) against whatever question is currently under discussion, before giving up as a genuine parse failure.
 
-    3. Register any newly-mentioned nouns as discourse referents, using the ORIGINAL (pre-resolution) arguments: a pronoun is never itself a new lexicon noun, 
+    3. Register any newly-mentioned nouns as discourse referents, using the ORIGINAL (pre-resolution) arguments: a pronoun is never itself a new lexicon noun,
     so this step naturally never registers a pronoun as if it were a fresh entity.
 
     4. Resolve every pronoun argument: try cataphora first (forward reference within this sentence, licensed only by Principle C), then fall back to ordinary backward 
@@ -24,7 +25,7 @@ WHAT ONE TURN ACTUALLY DOES, IN ORDER:
 
     6. Disambiguate any polysemous word against its sentence-mates' selectional constraints.
 
-    7. Classify the utterance's speech act, and detect focus if a focus particle is present.
+    7. Classify the utterance's speech act, and detect focus (what a focus particle like "only"/"even" actually combined with in the derivation tree) if one is present.
 
     8. Compile and evaluate truth via SemanticCompiler; if the predicate was idiom-tagged during parsing, look up and attach its real (figurative.py) meaning to the payload; if the
     predicate declares a selectional requirement for an argument position that the actual argument doesn't literally satisfy, attempt metonymic/metaphorical repair and attach it
@@ -40,8 +41,12 @@ WHAT ONE TURN ACTUALLY DOES, IN ORDER:
     open a Modal & Attitude context for the matrix subject and assert the embedded clause into that context only, never into global reality: this is what keeps "John thinks Mary is home" from corrupting what
     DEMES knows to actually be true.
 
-    12. If a wh-word ("who"/"what") is among the arguments (a non-movement wh-question core/parser.py could actually produce, e.g. "Who walked?" or "What is the suitcase?") push a QUDEntry marking that argument 
+    12. If a wh-word ("who"/"what") is among the arguments (a non-movement wh-question core/parser.py could actually produce, e.g. "Who walked?" or "What is the suitcase?") push a QUDEntry marking that argument
     position as the open slot onto this pipeline's persistent QUDStack, so a later bare-fragment answer has something real to fill in.
+
+    13. If the utterance began with a recognized discourse connective ("However, Mary stayed.": stripped before parsing, step 2, since it isn't part of the clause's own content), and this isn't the
+    conversation's very first turn, classify how this turn relates to the previous one (SDRT's closed six-relation core) purely from the connective: the aktionsart-based diagnostic stays dormant until the
+    lexicon migration gives it something real to classify.
 
 A COORDINATED sentence ("John left and Mary left") runs every step above uniformly over a list of conjuncts (one conjunct for an ordinary sentence, two for a coordinated one) rather than as a special case bolted 
 on afterward: each conjunct gets its own noun registration, pronoun resolution, and truth evaluation, and the coordinator's own connective (AND/OR, from core/parser.py's get_coordinator_connective) combines their 
@@ -57,7 +62,10 @@ from typing import Dict, Any, List, Optional
 
 from core.types import LogicalForm, ModalFlavor, FrameTemplate
 from core.lexicon import LexiconManager
-from core.parser import ChartParser, get_pronoun_features, get_coordinator_connective, get_coordination_conjuncts, find_np_coordination_members, WH_WORDS
+from core.parser import (
+    ChartParser, get_pronoun_features, get_coordinator_connective, get_coordination_conjuncts,
+    find_np_coordination_members, find_focused_constituent, WH_WORDS,
+)
 from core.world_model import WorldModel
 from core.world_model import get_presupposition_trigger as _get_presupposition_trigger
 from core.semantics import SemanticCompiler
@@ -67,9 +75,10 @@ from core.discourse import (
     resolve_pronoun_with_agreement,
     attempt_cataphora_resolution,
     find_pronoun_and_name_leaves,
-    detect_focus,
     accommodate_presupposition,
     generate_scalar_implicature,
+    is_discourse_connective,
+    classify_rhetorical_relation,
     QUDEntry,
     QUDStack,
 )
@@ -103,12 +112,33 @@ class DEMESPipeline:
         immediately below (one item for the ordinary case) so every later step (registration, pronoun resolution, evaluation, recording) is written
         once and runs uniformly over however many conjuncts there actually are, rather than as parallel single/coordinated code paths.
         """
+        original_raw_text = raw_text
+        has_prior_turn = self.world_model.current_turn > 0
         self.world_model.advance_turn()
         tokens = self.parser.tokenize(raw_text)
+
+        # A sentence-initial discourse connective ("However, Mary stayed.") is stripped before parsing: it relates THIS clause to the previous turn,
+        # it isn't part of this clause's own content, and core/parser.py doesn't (and isn't meant to) recognize any of these words at all. Safe to
+        # reconstruct the remaining text from tokens: tokenize() already lowercases and strips punctuation internally regardless, so parsing the
+        # reconstructed string produces exactly what parsing the original (minus the connective) would have. The turn's OWN reported "raw_text" output
+        # stays the untouched original (original_raw_text), never this internally-stripped working copy.
+        connective_word = None
+        if tokens and is_discourse_connective(tokens[0]):
+            connective_word = tokens[0]
+            tokens = tokens[1:]
+            raw_text = " ".join(tokens)
 
         parsed_form, derivation_tree = self.parser.parse_with_derivation(raw_text)
         is_coordinated = isinstance(parsed_form, list)
         conjuncts: List[LogicalForm] = parsed_form if is_coordinated else ([parsed_form] if parsed_form else [])
+
+        resolved_from_fragment = False
+        if not conjuncts:
+            fragment_form = self.qud_stack.resolve_fragment(tokens)
+            if fragment_form is not None:
+                conjuncts = [fragment_form]
+                resolved_from_fragment = True
+
         representative_form = conjuncts[0] if conjuncts else None
 
         conjunct_trees = get_coordination_conjuncts(derivation_tree) if is_coordinated else None
@@ -121,7 +151,7 @@ class DEMESPipeline:
         accommodated_presuppositions = self._check_presuppositions(tokens, representative_form)
         word_senses = self._disambiguate_utterance(tokens)
         speech_act = classify_speech_act(representative_form, raw_text)
-        focused_constituent = detect_focus(tokens)
+        focused_constituent = find_focused_constituent(derivation_tree)
         implicatures = [imp for imp in (generate_scalar_implicature(t) for t in tokens) if imp]
 
         conjunct_payloads = [self.compiler.compile_and_evaluate(conjunct) for conjunct in conjuncts]
@@ -142,8 +172,16 @@ class DEMESPipeline:
             semantic_payload = conjunct_payloads[0] if conjunct_payloads else self.compiler.compile_and_evaluate(None)
             logical_form_out = representative_form
 
+        # SDRT, connective half only (Phase 5 D4): the aktionsart-based diagnostic stays honestly dormant: nothing anywhere computes a real aktionsart
+        # from a live parse yet (blocked on the still-deferred lexicon migration), so classify_rhetorical_relation is only ever given None for both,
+        # which is safe and correct here since it checks the explicit connective before ever looking at aktionsart. Only attempted when there's an
+        # actual previous turn to relate this one to: a connective as the conversation's very first utterance has nothing to relate to yet.
+        rhetorical_relation = None
+        if connective_word is not None and has_prior_turn:
+            rhetorical_relation = classify_rhetorical_relation(None, None, connective = connective_word).value
+
         return {
-            "raw_text": raw_text,
+            "raw_text": original_raw_text,
             "logical_form": logical_form_out,
             "semantics": semantic_payload,
             "speech_act": speech_act.value,
@@ -154,6 +192,8 @@ class DEMESPipeline:
             "cataphora_resolutions": cataphora_resolutions,
             "modal_context": modal_context,
             "qud_entry": qud_entry,
+            "resolved_from_fragment": resolved_from_fragment,
+            "rhetorical_relation": rhetorical_relation,
         }
 
     # Coordination: combining a coordinated sentence's per-conjunct payloads into one turn-level result.

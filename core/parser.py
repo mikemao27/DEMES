@@ -398,7 +398,10 @@ def supertag_function_word(word: str) -> List[CCGCategory]:
     if word in COMPARISON_MARKERS:
         return [COMPARISON_PP]
     if word in FOCUS_PARTICLES:
-        return [PREDICATE_MODIFIER]
+        # Mid-sentence attachment ("John only walked.") is the existing, already-working PREDICATE_MODIFIER candidate. SENTENCE_MODIFIER (the exact
+        # same S/S shape "that"'s COMPLEMENTIZER already uses to consume a whole following sentence in one step) is a second candidate letting a focus
+        # particle attach sentence-initially too ("Only John walked."): confirmed this genuinely couldn't parse at all before this candidate existed.
+        return [PREDICATE_MODIFIER, SENTENCE_MODIFIER]
     if word in NPI_WORDS:
         return [PREDICATE_MODIFIER] if word in ("ever", "at_all") else [NP]
     if word in PRONOUNS:
@@ -466,11 +469,45 @@ def collect_leaves(node: DerivationNode) -> List[DerivationNode]:
 
     return leaves
 
+def find_focused_constituent(root: Optional[DerivationNode]) -> Optional[str]:
+    """
+    Finds a focus particle ("only"/"even") anywhere in the tree and returns the surface word of whatever it actually combined with: the same
+    parent-and-sibling pattern _collect_stored_quantifiers already uses for a quantifier's restrictor. Works uniformly for both reachable attachment
+    shapes: mid-sentence ("John only walked.": the particle's sibling is the single VP leaf it modifies) and sentence-initial ("Only John walked.":
+    the sibling is the whole remaining sentence, so its own first leaf, the subject, is what's returned). Returns None if `root` is None (an
+    unparsable sentence never gets a confident-sounding focus answer just because a particle happened to appear somewhere in the raw text) or if no
+    focus particle is found at all.
+    """
+    if root is None:
+        return None
+
+    for leaf in collect_leaves(root):
+        if leaf.token not in FOCUS_PARTICLES:
+            continue
+        parent = find_parent(root, leaf)
+        if parent is None:
+            continue
+        sibling = next((child for child in parent.children if child is not leaf), None)
+        if sibling is None:
+            continue
+        return sibling.token if sibling.is_leaf() else collect_leaves(sibling)[0].token
+
+    return None
+
 def check_npi_licensing(root: DerivationNode) -> List[str]:
     """
-    Returns the surface text of any negative-polarity-item leaf found in the tree without a c-commanding licensor above it: an empty list means the sentence is fine.
+    Returns the surface text of any negative-polarity-item leaf found in the tree without a licensor: an empty list means the sentence is fine.
+    Negation licenses an NPI via c-command (a specific token must structurally dominate it: see c_commands). A question licenses every NPI in the
+    whole clause instead, via a genuinely different mechanism: interrogative force is a WHOLE-CLAUSE licensing environment in the standard
+    Ladusaw/Fauconnier downward-entailment account, not something a single token needs to c-command ("Who saw anyone?" is fine with no c-commanding
+    licensor anywhere near "anyone"), so this is checked as its own, structurally different condition rather than folded into NPI_LICENSORS. Honest,
+    narrow limitation: this checks the WHOLE tree for a wh-word, so a coordinated sentence with one question-conjunct and one non-question-conjunct
+    containing an unlicensed NPI would be incorrectly exempted: a deliberately unhandled edge case, not silently ignored.
     """
     leaves = collect_leaves(root)
+    if any(leaf.token in WH_WORDS for leaf in leaves):
+        return []
+
     violations = []
     for leaf in leaves:
         if not leaf.token or leaf.token.lower() not in NPI_WORDS:

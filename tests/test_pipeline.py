@@ -223,9 +223,27 @@ class TestScalarImplicatureIntegration(TestPipelineBase):
         self.assertIn("NOT_ALL", result["implicatures"])
 
 class TestFocusIntegration(TestPipelineBase):
-    def test_focus_particle_identifies_the_focused_word(self):
-        result = self.pipeline.process_utterance("Only John left.")
+    """
+    Phase 5, Sub-step D1: focus detection is now derivation-tree-based (core/parser.py's find_focused_constituent), reached via process_utterance's
+    real derivation_tree rather than a raw-token scan disconnected from whether the sentence actually parsed.
+    """
+    def test_sentence_initial_focus_particle_identifies_the_focused_word(self):
+        # "Only John walked." (not "left": "left" isn't in core/lexicon.py's irregular-forms table yet, a separate, already-flagged gap): this shape
+        # genuinely didn't parse at all before this sub-step (focus particles had no sentence-initial candidate category).
+        result = self.pipeline.process_utterance("Only John walked.")
+        self.assertIsNotNone(result["logical_form"])
         self.assertEqual(result["focus"], "john")
+
+    def test_mid_sentence_focus_particle_identifies_the_focused_word(self):
+        result = self.pipeline.process_utterance("John only walked.")
+        self.assertEqual(result["focus"], "walked")
+
+    def test_unparsable_sentence_reports_no_focus_even_with_a_particle_present(self):
+        # The bug this locks in: the old raw-token detect_focus reported a confident "john" here even though this exact sentence never parsed at all
+        # (verified live during this sub-step's own design): the new tree-based version correctly reports nothing for a sentence DEMES didn't understand.
+        result = self.pipeline.process_utterance("Only John left.")
+        self.assertIsNone(result["logical_form"])
+        self.assertIsNone(result["focus"])
 
 class TestModalAttitudeIntegration(TestPipelineBase):
     """
@@ -287,6 +305,35 @@ class TestQUDIntegration(TestPipelineBase):
         self.pipeline.process_utterance("Who walked?")
         self.pipeline.process_utterance("The suitcase is portable.")
         self.assertEqual(self.pipeline.qud_stack.current().predicate, "WALKED")
+
+class TestFragmentAnswerIntegration(TestPipelineBase):
+    """
+    Phase 5, Sub-step D2: a bare fragment answer ("John.") to an open wh-question is resolved via QUDStack.resolve_fragment instead of being treated
+    as its own free-standing (and unparseable) sentence, then runs through the entire rest of the ordinary pipeline unchanged.
+    """
+    def test_fragment_answer_resolves_and_evaluates(self):
+        self.pipeline.process_utterance("Who walked?")
+        result = self.pipeline.process_utterance("John.")
+        self.assertTrue(result["resolved_from_fragment"])
+        self.assertEqual(result["logical_form"].predicate, "WALKED")
+        self.assertEqual(result["logical_form"].arguments, ["john"])
+        self.assertEqual(result["semantics"]["status"], "success")
+
+    def test_ordinary_sentence_is_not_marked_as_resolved_from_a_fragment(self):
+        result = self.pipeline.process_utterance("The suitcase is portable.")
+        self.assertFalse(result["resolved_from_fragment"])
+
+    def test_a_genuinely_unparsable_utterance_with_no_open_question_still_fails(self):
+        result = self.pipeline.process_utterance("Quantum mechanics is weird")
+        self.assertFalse(result["resolved_from_fragment"])
+        self.assertIsNone(result["logical_form"])
+
+    def test_resolved_question_cannot_be_answered_twice(self):
+        self.pipeline.process_utterance("Who walked?")
+        self.pipeline.process_utterance("John.")
+        result = self.pipeline.process_utterance("Mary.")
+        self.assertFalse(result["resolved_from_fragment"])
+        self.assertIsNone(result["logical_form"])
 
 class TestCoordinationIntegration(TestPipelineBase):
     """
@@ -471,6 +518,42 @@ class TestRelationalFactIntegration(TestPipelineBase):
     def test_single_argument_sentence_is_not_recorded(self):
         self.pipeline.process_utterance("The suitcase is portable.")
         self.assertEqual(self.pipeline.world_model.relational_facts, {})
+
+class TestSDRTIntegration(TestPipelineBase):
+    """
+    Phase 5, Sub-step D4: a sentence-initial discourse connective ("However, Mary stayed.") is stripped before parsing, and (once this isn't the
+    conversation's first turn) classified against the previous turn via core/discourse.py's connective-based half of classify_rhetorical_relation.
+    """
+    def setUp(self):
+        super().setUp()
+        self.pipeline.lexicon.lexicon["mary"] = {"category": "proper_noun", "semantic_type": "e", "primitives": [], "valency": "none"}
+        self.pipeline.lexicon.lexicon["leave"] = {"category": "verb", "semantic_type": "<e, t>", "primitives": [{"name": "DO", "category": "action"}], "valency": "intransitive"}
+        self.pipeline.lexicon.lexicon["stay"] = {"category": "verb", "semantic_type": "<e, t>", "primitives": [{"name": "DO", "category": "action"}], "valency": "intransitive"}
+
+    def test_connective_after_a_prior_turn_is_classified(self):
+        self.pipeline.process_utterance("John leaves.")
+        result = self.pipeline.process_utterance("However, Mary stays.")
+        self.assertEqual(result["rhetorical_relation"], "contrast")
+
+    def test_connective_as_the_very_first_turn_yields_no_relation(self):
+        result = self.pipeline.process_utterance("However, Mary stays.")
+        self.assertIsNone(result["rhetorical_relation"])
+
+    def test_connective_stripped_sentence_still_evaluates_its_own_content(self):
+        self.pipeline.process_utterance("John leaves.")
+        result = self.pipeline.process_utterance("However, Mary stays.")
+        self.assertEqual(result["logical_form"].predicate, "STAYS")
+        self.assertEqual(result["logical_form"].arguments, ["mary"])
+
+    def test_raw_text_output_keeps_the_original_untouched_text(self):
+        self.pipeline.process_utterance("John leaves.")
+        result = self.pipeline.process_utterance("However, Mary stays.")
+        self.assertEqual(result["raw_text"], "However, Mary stays.")
+
+    def test_ordinary_sentence_without_a_connective_has_no_relation(self):
+        self.pipeline.process_utterance("John leaves.")
+        result = self.pipeline.process_utterance("Mary stays.")
+        self.assertIsNone(result["rhetorical_relation"])
 
 if __name__ == "__main__":
     unittest.main()

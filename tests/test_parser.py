@@ -19,7 +19,7 @@ from core.parser import (
     type_raise,
     supertag_content_word, supertag_function_word,
     get_pronoun_features,
-    get_coordination_conjuncts, get_coordinator_connective, find_np_coordination_members,
+    get_coordination_conjuncts, get_coordinator_connective, find_np_coordination_members, find_focused_constituent,
     find_parent, c_commands, collect_leaves, check_npi_licensing,
     ChartParser,
 )
@@ -194,6 +194,16 @@ class TestNPILicensingOnTrees(unittest.TestCase):
         root = DerivationNode(label = "VP", children = (see, anyone), span = (0, 2))
         self.assertEqual(check_npi_licensing(root), ["anyone"])
 
+    def test_licensed_by_a_question_with_no_c_commanding_negation_at_all(self):
+        # "Who saw anyone?": a whole-clause licensing environment (interrogative force), not a c-command relationship the way negation is: "who"
+        # doesn't need to c-command "anyone" at all, it just needs to be present somewhere in the clause.
+        who = DerivationNode(label = "NP", token = "who", span = (0, 1))
+        anyone = DerivationNode(label = "NP", token = "anyone", span = (2, 3))
+        saw = DerivationNode(label = "V", token = "saw", span = (1, 2))
+        vp = DerivationNode(label = "VP", children = (saw, anyone), span = (1, 3))
+        root = DerivationNode(label = "S", children = (who, vp), span = (0, 3))
+        self.assertEqual(check_npi_licensing(root), [])
+
 class TestChartParserEndToEnd(unittest.TestCase):
     def setUp(self):
         self.test_dir = "tests/temp_data_parser"
@@ -342,6 +352,10 @@ class TestChartParserEndToEnd(unittest.TestCase):
     def test_npi_without_licensor_is_rejected(self):
         form = self.parser.parse("I saw anyone.")
         self.assertIsNone(form)
+
+    def test_npi_licensed_by_a_question_parses(self):
+        form = self.parser.parse("Who saw anyone?")
+        self.assertIsNotNone(form)
 
     def test_unknown_word_fails_gracefully(self):
         form = self.parser.parse("Quantum mechanics is weird")
@@ -630,6 +644,44 @@ class TestWhQuestions(unittest.TestCase):
         self.lexicon.lexicon["portable"] = {"category": "adjective", "semantic_type": "<e,t>", "primitives": [{"name": "CAN", "category": "logical"}], "valency": "none"}
         form = self.parser.parse("Is the suitcase portable?")
         self.assertIsNone(form)
+
+class TestFocusDetection(unittest.TestCase):
+    """
+    Phase 5, Sub-step D1: focus particles ("only"/"even") now get a second candidate category (the same S/S shape "that"'s COMPLEMENTIZER already
+    uses) letting them attach sentence-initially, not just mid-sentence; find_focused_constituent reads the actual derivation tree rather than
+    scanning raw tokens, so it can never report a confident answer for a sentence that didn't actually parse.
+    """
+    def setUp(self):
+        self.test_dir = "tests/temp_data_parser_focus"
+        os.makedirs(self.test_dir, exist_ok = True)
+        self.store_path = os.path.join(self.test_dir, "lexicon.json")
+        self.lexicon = LexiconManager(store_path = self.store_path)
+
+        self.lexicon.lexicon["john"] = {"category": "proper_noun", "semantic_type": "e", "primitives": [], "valency": "none"}
+        self.lexicon.lexicon["walk"] = {"category": "verb", "semantic_type": "<e,t>", "primitives": [{"name": "MOVE", "category": "action"}], "valency": "intransitive"}
+
+        self.parser = ChartParser(self.lexicon)
+
+    def tearDown(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_mid_sentence_focus_particle(self):
+        _form, tree = self.parser.parse_with_derivation("John only walked.")
+        self.assertEqual(find_focused_constituent(tree), "walked")
+
+    def test_sentence_initial_focus_particle_now_parses_and_is_found(self):
+        form, tree = self.parser.parse_with_derivation("Only John walked.")
+        self.assertIsNotNone(form)
+        self.assertEqual(find_focused_constituent(tree), "john")
+
+    def test_no_focus_particle_returns_none(self):
+        _form, tree = self.parser.parse_with_derivation("John walked.")
+        self.assertIsNone(find_focused_constituent(tree))
+
+    def test_none_tree_returns_none(self):
+        # An unparsable sentence never gets a confident-sounding focus answer just because a particle happened to appear in the raw text.
+        self.assertIsNone(find_focused_constituent(None))
 
 if __name__ == "__main__":
     unittest.main()
