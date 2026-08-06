@@ -254,13 +254,15 @@ class WorldModel:
         "Pluperfect" (core/parser.py recognizes "had" + participle as its own tense, Phase 4) gets a real three-point distinction from simple past:
         event_time strictly before reference_time strictly before speech_time ("Mary HAD LEFT (event) by the time John arrived (reference), and both
         are before now"), exactly what EventRecord.is_pluperfect() checks for, simple past only ever collapses event_time and reference_time
-        together, since core/parser.py has no way to detect a separate reference point for it. What's implemented here is correct for every tense
-        distinction actually available right now; a still-honest gap remains for aspect marking beyond these ("was leaving", the progressive-overlap
-        case EventRecord.is_progressive_overlap() already anticipates), which core/parser.py doesn't detect at all yet.
+        together, since core/parser.py has no way to detect a separate reference point for it. "Progressive" ("was" + "-ing", core/parser.py's
+        _detect_tense) gets event_time and reference_time collapsed together one step before speech_time, both still before now but genuinely
+        distinct from plain "past" (which sets reference_time to speech_time itself): exactly what EventRecord.is_progressive_overlap() checks for.
         """
         speech_time = self.current_turn
         if tense == "pluperfect":
             event_time, reference_time = speech_time - 2, speech_time - 1
+        elif tense == "progressive":
+            event_time, reference_time = speech_time - 1, speech_time - 1
         elif tense == "past":
             event_time, reference_time = speech_time - 1, speech_time
         elif tense == "future":

@@ -217,6 +217,22 @@ class TestPresuppositionAccommodationIntegration(TestPipelineBase):
         result = self.pipeline.process_utterance("John stopped.")
         self.assertEqual(result["accommodated_presuppositions"], [])
 
+    def test_accommodation_with_nothing_known_locally_is_reported_unconfirmed(self):
+        # Loose-ends cleanup, Sub-step L2: nothing in the Episodic Fact Graph backs this up, so accommodation falls through to "assume it holds":
+        # exactly the case that should be flagged for a caller to potentially escalate to NeuralBridge.lookup_fact.
+        result = self.pipeline.process_utterance("John stopped.")
+        self.assertEqual(len(result["unconfirmed_presuppositions"]), 1)
+        self.assertEqual(result["unconfirmed_presuppositions"][0]["trigger"], "stop")
+        self.assertEqual(result["unconfirmed_presuppositions"][0]["relation"], FrameTemplate.HAPPENS_TO)
+
+    def test_accommodation_confirmed_locally_is_not_reported_unconfirmed(self):
+        # Real bug fixed by this sub-step: accommodate_presupposition's own local Episodic-Fact-Graph check used to be dead code, since
+        # related_relation was never passed in: this proves it now actually runs and actually finds a matching fact when one exists.
+        self.pipeline.world_model.assert_episodic_fact(FrameTemplate.HAPPENS_TO, "john", "smoke")
+        result = self.pipeline.process_utterance("John stopped.")
+        self.assertIn("stop", result["accommodated_presuppositions"])
+        self.assertEqual(result["unconfirmed_presuppositions"], [])
+
 class TestScalarImplicatureIntegration(TestPipelineBase):
     def test_some_generates_a_not_all_implicature(self):
         result = self.pipeline.process_utterance("Some students passed.")
@@ -554,6 +570,34 @@ class TestSDRTIntegration(TestPipelineBase):
         self.pipeline.process_utterance("John leaves.")
         result = self.pipeline.process_utterance("Mary stays.")
         self.assertIsNone(result["rhetorical_relation"])
+
+class TestSDRTAktionsartIntegration(TestPipelineBase):
+    """
+    Loose-ends cleanup, Sub-step L3: an idiom-tagged predicate's Explication is the one place in the live pipeline a real, structured explication
+    is reachable today, ahead of the lexicon migration that will eventually give ordinary verbs one too: this wires derive_aktionsart against
+    that one real, reachable source, making SDRT's aktionsart-based classification path genuinely non-decorative for the first time.
+    """
+    def test_two_idiom_turns_in_a_row_get_a_real_aktionsart_based_relation(self):
+        # "kick the bucket" -> HAPPENS_TO frame -> ACHIEVEMENT; two achievements in sequence -> Narration, per classify_rhetorical_relation's own
+        # closed logic (core/discourse.py): this is that logic genuinely firing from a live parse for the first time anywhere in the system.
+        self.pipeline.process_utterance("John kicked the bucket.")
+        result = self.pipeline.process_utterance("John kicked the bucket.")
+        self.assertEqual(result["rhetorical_relation"], "narration")
+
+    def test_idiom_turn_as_the_very_first_turn_yields_no_relation(self):
+        result = self.pipeline.process_utterance("John kicked the bucket.")
+        self.assertIsNone(result["rhetorical_relation"])
+
+    def test_non_idiom_sentence_pair_with_no_connective_still_yields_no_relation(self):
+        # The loosened SDRT gate must not start guessing where it genuinely has no signal: an ordinary verb's predicate still has no real
+        # Explication to derive an aktionsart from (that's the still-deferred lexicon migration's job), so this must stay exactly as honest as before.
+        self.pipeline.process_utterance("John stopped.")
+        result = self.pipeline.process_utterance("John stopped.")
+        self.assertIsNone(result["rhetorical_relation"])
+
+    def test_idiom_event_is_recorded_with_a_real_aktionsart(self):
+        self.pipeline.process_utterance("John kicked the bucket.")
+        self.assertEqual(self.pipeline.world_model.event_log[-1].aktionsart.value, "achievement")
 
 if __name__ == "__main__":
     unittest.main()

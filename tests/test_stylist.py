@@ -108,8 +108,15 @@ class TestStylistWithLexicon(_StylistLexiconFixture):
         form.quantifier_meta = {"operator": "FORALL", "variable": "x", "restrictor": "SUITCASE"}
         self.assertEqual(realize_logical_form(form, self.lexicon), "Every suitcase is portable.")
 
-    def test_idiom_tagged_predicate_returns_none(self):
-        form = LogicalForm(predicate = "IDIOM:kick_bucket", arguments = ["john"])
+    def test_idiom_tagged_predicate_realizes_its_own_literal_surface_form(self):
+        # Loose-ends cleanup, Sub-step L4: an idiom-tagged predicate used to return None here, falling through to the deterministic formatter,
+        # which leaked the raw "IDIOM:kick_bucket" tag into user-facing text. It now recovers the literal trigger verb from the tag and realizes
+        # its own correct, literal surface form: never a paraphrase into the idiom's NSM meaning, which stays the transparency view's job.
+        form = LogicalForm(predicate = "IDIOM:kick_bucket", arguments = ["john", "bucket"])
+        self.assertEqual(realize_logical_form(form, self.lexicon), "John kicks the bucket.")
+
+    def test_verb_with_no_arguments_returns_none(self):
+        form = LogicalForm(predicate = "KICK", arguments = [])
         self.assertIsNone(realize_logical_form(form, self.lexicon))
 
     def test_none_logical_form_returns_none(self):
@@ -149,7 +156,9 @@ class TestRealizeClausalComplement(_StylistLexiconFixture):
         self.assertEqual(realize_logical_form(form, self.lexicon), "John thinks that Mary is not home.")
 
     def test_unrealizable_embedded_clause_propagates_none(self):
-        embedded = LogicalForm(predicate = "IDIOM:kick_bucket", arguments = ["mary"])
+        # An idiom-tagged embedded clause no longer counts as "unrealizable" (Sub-step L4 above), so a verb with no arguments at all
+        # (still genuinely uncovered: nothing to build a subject phrase from) is what this test now uses to exercise propagation.
+        embedded = LogicalForm(predicate = "KICK", arguments = [])
         form = LogicalForm(predicate = "THINKS", arguments = ["john", embedded])
         self.assertIsNone(realize_logical_form(form, self.lexicon))
 
@@ -199,7 +208,9 @@ class TestRealizeCoordination(_StylistLexiconFixture):
         self.assertNotIn("and john walks", result)
 
     def test_one_unrealizable_conjunct_fails_the_whole_coordination(self):
-        conjuncts = [LogicalForm(predicate = "PORTABLE", arguments = ["suitcase"]), LogicalForm(predicate = "IDIOM:kick_bucket", arguments = ["john"])]
+        # An idiom-tagged conjunct no longer counts as "unrealizable" (Sub-step L4 above), so a verb with no arguments at all
+        # (still genuinely uncovered) is what this test now uses to exercise the whole-coordination-fails behavior.
+        conjuncts = [LogicalForm(predicate = "PORTABLE", arguments = ["suitcase"]), LogicalForm(predicate = "KICK", arguments = [])]
         self.assertIsNone(_realize_coordinated(conjuncts, "AND", self.lexicon))
 
 class TestLocalStylistWithoutModel(unittest.TestCase):
@@ -231,12 +242,13 @@ class TestLocalStylistWithoutModel(unittest.TestCase):
         self.assertIn("Unparsable syntax.", result)
 
     def test_render_falls_back_when_logical_form_shape_is_uncovered(self):
-        # An idiom-tagged predicate: the symbolic realizer declines, so the deterministic formatter (which works from the
-        # payload dict, not the LogicalForm) takes over.
-        form = LogicalForm(predicate = "IDIOM:kick_bucket", arguments = ["john"])
-        payload = {"status": "success", "predicate": "IDIOM:kick_bucket", "arguments": ["john"], "truth_value": True}
+        # A verb predicate with no arguments at all: the symbolic realizer declines (nothing to build a subject phrase from), so the deterministic
+        # formatter (which works from the payload dict, not the LogicalForm) takes over. An idiom-tagged predicate used to be the example here, but
+        # is now realized correctly by the symbolic realizer (loose-ends cleanup, Sub-step L4), so it's no longer a valid "uncovered" example.
+        form = LogicalForm(predicate = "KICK", arguments = [])
+        payload = {"status": "success", "predicate": "KICK", "arguments": [], "truth_value": True}
         result = self.stylist.render(payload, form)
-        self.assertIn("idiom:kick_bucket", result.lower())
+        self.assertIn("kick", result.lower())
 
     def test_render_dispatches_a_coordinated_list_to_the_coordination_realizer(self):
         # The bug this locks in: render() used to hand a List[LogicalForm] straight to realize_logical_form, which crashed with

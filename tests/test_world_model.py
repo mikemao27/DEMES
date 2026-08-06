@@ -127,6 +127,18 @@ class TestEpisodicTimeline(unittest.TestCase):
         record = self.world_model.record_event("LEAVE", {}, tense = "past")
         self.assertFalse(record.is_pluperfect())
 
+    def test_progressive_event_satisfies_is_progressive_overlap(self):
+        # EventRecord.is_progressive_overlap() has been correct and tested since Phase 4 but had nothing real to classify until core/parser.py
+        # could detect "was" + "-ing" as its own tense (loose-ends cleanup, Sub-step L1): this is that distinction actually reaching record_event.
+        self.world_model.advance_turn()
+        record = self.world_model.record_event("LEAVE", {}, tense = "progressive")
+        self.assertTrue(record.is_progressive_overlap())
+
+    def test_simple_past_is_not_progressive_overlap(self):
+        self.world_model.advance_turn()
+        record = self.world_model.record_event("LEAVE", {}, tense = "past")
+        self.assertFalse(record.is_progressive_overlap())
+
     def test_event_is_appended_to_the_log(self):
         self.world_model.advance_turn()
         self.world_model.record_event("KICK", {"agent": "john", "patient": "ball"})

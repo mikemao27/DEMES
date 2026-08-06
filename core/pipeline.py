@@ -44,9 +44,9 @@ WHAT ONE TURN ACTUALLY DOES, IN ORDER:
     12. If a wh-word ("who"/"what") is among the arguments (a non-movement wh-question core/parser.py could actually produce, e.g. "Who walked?" or "What is the suitcase?") push a QUDEntry marking that argument
     position as the open slot onto this pipeline's persistent QUDStack, so a later bare-fragment answer has something real to fill in.
 
-    13. If the utterance began with a recognized discourse connective ("However, Mary stayed.": stripped before parsing, step 2, since it isn't part of the clause's own content), and this isn't the
-    conversation's very first turn, classify how this turn relates to the previous one (SDRT's closed six-relation core) purely from the connective: the aktionsart-based diagnostic stays dormant until the
-    lexicon migration gives it something real to classify.
+    13. If the utterance began with a recognized discourse connective ("However, Mary stayed.": stripped before parsing, step 2, since it isn't part of the clause's own content), or a real Aktionsart was
+    derived this turn or the previous one (currently only possible via an idiom-tagged predicate's own Explication: ordinary verbs still have nothing real to derive one from until the lexicon migration),
+    and this isn't the conversation's very first turn, classify how this turn relates to the previous one (SDRT's closed six-relation core) from whichever of those two signals is actually available.
 
 A COORDINATED sentence ("John left and Mary left") runs every step above uniformly over a list of conjuncts (one conjunct for an ordinary sentence, two for a coordinated one) rather than as a special case bolted 
 on afterward: each conjunct gets its own noun registration, pronoun resolution, and truth evaluation, and the coordinator's own connective (AND/OR, from core/parser.py's get_coordinator_connective) combines their 
@@ -58,9 +58,9 @@ the sentence shapes core/parser.py can actually produce today: see the architect
 and doesn't cover.
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
-from core.types import LogicalForm, ModalFlavor, FrameTemplate
+from core.types import LogicalForm, ModalFlavor, FrameTemplate, Aktionsart
 from core.lexicon import LexiconManager
 from core.parser import (
     ChartParser, get_pronoun_features, get_coordinator_connective, get_coordination_conjuncts,
@@ -68,7 +68,7 @@ from core.parser import (
 )
 from core.world_model import WorldModel
 from core.world_model import get_presupposition_trigger as _get_presupposition_trigger
-from core.semantics import SemanticCompiler
+from core.semantics import SemanticCompiler, derive_aktionsart
 from core.figurative import rewrite_idiom, resolve_figurative_meaning
 from core.discourse import (
     classify_speech_act,
@@ -104,6 +104,9 @@ class DEMESPipeline:
         self.parser = ChartParser(self.lexicon)
         self.compiler = SemanticCompiler(self.world_model, self.lexicon)
         self.qud_stack = QUDStack()
+        # Persists the most recent turn's derived Aktionsart across calls, the same way self.qud_stack persists across turns, so SDRT's
+        # aktionsart-based classification (loose-ends cleanup, Sub-step L3) has a real "previous turn" to compare against.
+        self._last_aktionsart: Optional[Aktionsart] = None
 
     def process_utterance(self, raw_text: str) -> Dict[str, Any]:
         """
@@ -148,19 +151,23 @@ class DEMESPipeline:
         
         cataphora_resolutions = self._resolve_pronoun_arguments(conjuncts, derivation_tree)
 
-        accommodated_presuppositions = self._check_presuppositions(tokens, representative_form)
+        accommodated_presuppositions, unconfirmed_presuppositions = self._check_presuppositions(tokens, representative_form)
         word_senses = self._disambiguate_utterance(tokens)
         speech_act = classify_speech_act(representative_form, raw_text)
         focused_constituent = find_focused_constituent(derivation_tree)
         implicatures = [imp for imp in (generate_scalar_implicature(t) for t in tokens) if imp]
 
         conjunct_payloads = [self.compiler.compile_and_evaluate(conjunct) for conjunct in conjuncts]
+        current_turn_aktionsart: Optional[Aktionsart] = None
         for conjunct, payload in zip(conjuncts, conjunct_payloads):
-            self._attach_idiom_meaning(conjunct, payload)
+            conjunct_aktionsart = self._attach_idiom_meaning(conjunct, payload)
+            if current_turn_aktionsart is None:
+                current_turn_aktionsart = conjunct_aktionsart
+
             self._attach_figurative_repair(conjunct, payload)
             self._consult_episodic_fact_graph(conjunct, payload)
             self._record_relational_fact_if_applicable(conjunct, payload)
-            self.world_model.record_event(conjunct.predicate, roles = {}, tense = conjunct.tense)
+            self.world_model.record_event(conjunct.predicate, roles = {}, tense = conjunct.tense, aktionsart = conjunct_aktionsart)
 
         modal_context = self._open_modal_attitude_context(representative_form)
         qud_entry = self._update_qud_stack(representative_form)
@@ -172,13 +179,21 @@ class DEMESPipeline:
             semantic_payload = conjunct_payloads[0] if conjunct_payloads else self.compiler.compile_and_evaluate(None)
             logical_form_out = representative_form
 
-        # SDRT, connective half only (Phase 5 D4): the aktionsart-based diagnostic stays honestly dormant: nothing anywhere computes a real aktionsart
-        # from a live parse yet (blocked on the still-deferred lexicon migration), so classify_rhetorical_relation is only ever given None for both,
-        # which is safe and correct here since it checks the explicit connective before ever looking at aktionsart. Only attempted when there's an
-        # actual previous turn to relate this one to: a connective as the conversation's very first utterance has nothing to relate to yet.
+        # SDRT (Phase 5 D4's connective half, plus Sub-step L3's aktionsart half for the one case that can produce it today): the aktionsart-based
+        # diagnostic still stays dormant for ordinary verbs (nothing computes a real Explication for one yet, blocked on the still-deferred lexicon
+        # migration) but an idiom-tagged predicate's Explication IS reachable now (_attach_idiom_meaning), so previous_turn_aktionsart/
+        # current_turn_aktionsart are genuinely non-None whenever an idiom was involved this turn or the previous one. The gate below only calls
+        # classify_rhetorical_relation when there's actually a real signal to give it (a connective, or real aktionsart data): not on every turn
+        # unconditionally, which would make ordinary sentence pairs start getting a decorative default relation they have no real basis for.
+        previous_turn_aktionsart = self._last_aktionsart
+        self._last_aktionsart = current_turn_aktionsart
+
         rhetorical_relation = None
-        if connective_word is not None and has_prior_turn:
-            rhetorical_relation = classify_rhetorical_relation(None, None, connective = connective_word).value
+        has_real_signal = connective_word is not None or current_turn_aktionsart is not None or previous_turn_aktionsart is not None
+        if has_prior_turn and has_real_signal:
+            rhetorical_relation = classify_rhetorical_relation(
+                previous_turn_aktionsart, current_turn_aktionsart, connective = connective_word
+            ).value
 
         return {
             "raw_text": original_raw_text,
@@ -188,6 +203,7 @@ class DEMESPipeline:
             "word_senses": word_senses,
             "implicatures": implicatures,
             "accommodated_presuppositions": accommodated_presuppositions,
+            "unconfirmed_presuppositions": unconfirmed_presuppositions,
             "focus": focused_constituent,
             "cataphora_resolutions": cataphora_resolutions,
             "modal_context": modal_context,
@@ -360,24 +376,37 @@ class DEMESPipeline:
         return referent.name if referent else pronoun_text
 
     # Presupposition accommodation.
-    def _check_presuppositions(self, tokens: List[str], logical_form) -> List[str]:
+    def _check_presuppositions(self, tokens: List[str], logical_form) -> Tuple[List[str], List[Dict[str, Any]]]:
         """
-        Checks every presupposition-trigger word actually used (matched by lemma, so "stopped" and "stop" both trigger the same check) against what's 
-        already known, accommodating anything genuinely new. Returns the list of trigger words that were newly accommodated this turn.
+        Checks every presupposition-trigger word actually used (matched by lemma, so "stopped" and "stop" both trigger the same check) against what's
+        already known, accommodating anything genuinely new. Passes the trigger's own frame (e.g. HAPPENS_TO for "stop"/"start"/"again", KNOWS for
+        "know"/"realize": already sitting on PRESUPPOSITION_TRIGGERS, no new data needed) as accommodate_presupposition's related_relation, so its
+        existing local Episodic-Fact-Graph check actually runs (loose-ends cleanup, Sub-step L2: this was previously a dead branch, since nothing
+        ever passed that argument).
+
+        Returns (accommodated, unconfirmed): `accommodated` is every trigger word newly accommodated this turn, same shape as before. `unconfirmed`
+        is the subset that had to fall through to "assume it holds" rather than being confirmed via the Episodic Fact Graph: new in this sub-step,
+        additive to the return shape (List[str] -> Tuple[List[str], List[Dict]]) -- exposed so a caller (main.py) can decide whether to escalate to
+        NeuralBridge.lookup_fact as a genuine last-resort external tier, rather than silently trusting an assumption forever.
         """
         if not logical_form or not logical_form.arguments:
-            return []
+            return [], []
 
         subject = str(logical_form.arguments[0])
         accommodated = []
+        unconfirmed = []
         for token in tokens:
             lemma = self.lexicon.lemmatize(token) or token
+            trigger = _get_presupposition_trigger(lemma)
 
-            if _get_presupposition_trigger(lemma) is not None:
-                if accommodate_presupposition(self.world_model, lemma, subject):
+            if trigger is not None:
+                confirmed_locally = self.world_model.query_episodic_fact(trigger.frame, subject) is not None
+                if accommodate_presupposition(self.world_model, lemma, subject, related_relation = trigger.frame):
                     accommodated.append(lemma)
-        
-        return accommodated
+                    if not confirmed_locally:
+                        unconfirmed.append({"trigger": lemma, "relation": trigger.frame, "subject": subject})
+
+        return accommodated, unconfirmed
 
     # Word-sense disambiguation.
     def _disambiguate_utterance(self, tokens: List[str]) -> Dict[str, str]:
@@ -409,19 +438,26 @@ class DEMESPipeline:
         return tags
 
     # Figurative repair, idiom half: a clean, unambiguous trigger (the parser's own idiom-gating already confirmed it).
-    def _attach_idiom_meaning(self, logical_form, semantic_payload: Dict[str, Any]) -> None:
+    def _attach_idiom_meaning(self, logical_form, semantic_payload: Dict[str, Any]) -> Optional[Aktionsart]:
         """
-        If the parser tagged the predicate as an idiom ("IDIOM:kick_bucket"), attaches its real, NSM-grounded meaning to the payload.
+        If the parser tagged the predicate as an idiom ("IDIOM:kick_bucket"), attaches its real, NSM-grounded meaning to the payload, and returns
+        its derived Aktionsart (loose-ends cleanup, Sub-step L3). An idiom's Explication is currently the ONE place in the live pipeline a real,
+        structured explication is reachable at all (ordinary verbs still have nothing but a flat primitives tag list until the lexicon migration
+        gives them real explications too) so this is genuine, non-decorative aktionsart derivation for the one case that can actually produce it
+        today, not inert plumbing. Returns None for a non-idiom predicate, exactly as honest as before this sub-step.
         """
         if not logical_form or not logical_form.predicate.startswith("IDIOM:"):
-            return
+            return None
         idiom_meaning = rewrite_idiom(logical_form.predicate)
 
-        if idiom_meaning is not None:
-            semantic_payload["idiom_meaning"] = {
-                "frame": idiom_meaning.explication.frame.value,
-                "slots": idiom_meaning.explication.slots,
-            }
+        if idiom_meaning is None:
+            return None
+
+        semantic_payload["idiom_meaning"] = {
+            "frame": idiom_meaning.explication.frame.value,
+            "slots": idiom_meaning.explication.slots,
+        }
+        return derive_aktionsart(idiom_meaning.explication)
 
     # Figurative repair, metonymy/metaphor half: opt-in, closed-vocabulary selectional requirements.
     def _attach_figurative_repair(self, logical_form, semantic_payload: Dict[str, Any]) -> None:

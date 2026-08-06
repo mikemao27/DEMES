@@ -141,6 +141,25 @@ def attempt_recovery(user_input: str, pipeline: DEMESPipeline, neural_bridge: Ne
 
     return "\n".join(notes) if notes else None
 
+def check_unconfirmed_presuppositions(result: Dict[str, Any], pipeline: DEMESPipeline, neural_bridge: NeuralBridge) -> List[str]:
+    """
+    For every presupposition this turn had to accommodate by assumption rather than by actually confirming it against the Episodic Fact Graph
+    (core/pipeline.py's _check_presuppositions, loose-ends cleanup Sub-step L2), makes one last-resort attempt to genuinely confirm it via
+    NeuralBridge.lookup_fact: reusing the trigger's own already-declared FrameTemplate relation, no new lookup vocabulary needed. Only attempted
+    when a model is loaded, matching every other NeuralBridge call site's gating (attempt_recovery, check_indirect_speech_act above). Returns a
+    short note per presupposition that lookup_fact actually resolved, for the caller to surface the same way recovery notes already are.
+    """
+    if not neural_bridge.llm:
+        return []
+
+    notes = []
+    for item in result.get("unconfirmed_presuppositions", []):
+        looked_up = neural_bridge.lookup_fact(item["relation"], item["subject"], pipeline.world_model)
+        if looked_up:
+            notes.append(f'Presupposition behind "{item["trigger"]}" for "{item["subject"]}" confirmed externally (provisional).')
+
+    return notes
+
 def check_indirect_speech_act(user_input: str, result: Dict[str, Any], neural_bridge: NeuralBridge) -> Optional[Dict[str, str]]:
     """
     Only attempted when a model is loaded and the utterance was classified as a plain assertive statement (a question or command already states its intent 
@@ -205,6 +224,9 @@ def main() -> None:
         indirect = check_indirect_speech_act(user_input, result, neural_bridge)
         if indirect:
             print(f"{INDENT}{YELLOW}Possible indirect request{RESET}: {DIM}{indirect['action']} {indirect['target']}{RESET}")
+
+        for note in check_unconfirmed_presuppositions(result, pipeline, neural_bridge):
+            print(f"{INDENT}{YELLOW}[DEMES Recovery]{RESET} {note}")
 
         # Step 4: Pass structured payload (and the LogicalForm, for symbolic realization) to the presentation layer.
         rendered_response = stylist.render(payload, logical_form)

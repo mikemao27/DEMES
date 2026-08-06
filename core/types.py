@@ -238,8 +238,10 @@ class EventRecord:
         return self.event_time < self.reference_time < self.speech_time
 
     def is_progressive_overlap(self) -> bool:
-        # The event was still ongoing at the reference point being described: "Mary WAS LEAVING (event, ongoing) when John arrived (reference)."
-        return self.event_time <= self.reference_time <= self.event_time + 1 and self.reference_time <= self.speech_time
+        # The event was still ongoing at the reference point being described: "Mary WAS LEAVING (event, ongoing) when John arrived (reference)." Genuine overlap means the event's own
+        # time point and the reference point coincide: not merely adjacent, which is what plain past ("Mary LEFT") already looks like on this same three-point timeline, and which the
+        # original off-by-one-tolerant version of this check (event_time <= reference_time <= event_time + 1) could not actually tell apart from real overlap.
+        return self.event_time == self.reference_time and self.reference_time <= self.speech_time
 
 @dataclass
 class DerivationNode:

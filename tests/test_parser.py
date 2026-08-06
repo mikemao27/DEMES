@@ -277,6 +277,15 @@ class TestChartParserEndToEnd(unittest.TestCase):
         self.assertEqual(form.tense, "pluperfect")
         self.assertTrue(form.is_negated)
 
+    def test_progressive_was_plus_ing_is_detected(self):
+        form = self.parser.parse("John was walking.")
+        self.assertEqual(form.tense, "progressive")
+        self.assertEqual(form.predicate, "WALKING")
+
+    def test_ordinary_past_copula_is_not_mistaken_for_progressive(self):
+        form = self.parser.parse("The suitcase was portable.")
+        self.assertEqual(form.tense, "past")
+
     def test_quantified_sentence(self):
         form = self.parser.parse("Every suitcase is portable.")
         self.assertEqual(form.quantifier_meta["operator"], "FORALL")

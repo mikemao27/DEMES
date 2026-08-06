@@ -75,7 +75,7 @@ def _realize_subject_phrase(subject_text: str, lexicon: Any, capitalize: bool = 
 
     return f"The {subject_text}" if capitalize else f"the {subject_text}"
 
-def _realize_verb_phrase(verb_lemma: str, tense: str, is_negated: bool) -> str:
+def _realize_verb_phrase(verb_lemma: str, tense: str, is_negated: bool, surface_form: Optional[str] = None) -> str:
     """
     Builds a grammatically correct verb phrase without needing a full generative conjugation system: present tense gets the closed, reversible "-s" suffix rule; past and future both use
     an auxiliary ("did"/"will") plus the bare verb, which is always grammatical even for irregular verbs ("John did go", not the wrong "*johned goed"), at the cost of sounding a little more
@@ -84,10 +84,15 @@ def _realize_verb_phrase(verb_lemma: str, tense: str, is_negated: bool) -> str:
     to always be correct, not to always be the most idiomatic phrasing. Only for an ACTIVE verb: a passive participle is realized by _realize_passive below instead, which needs a plain copula
     ("was kicked"), not this did/will/had auxiliary pattern. `verb_lemma` MUST already be the base form ("kick", not "kicked"/"kicks"): core/parser.py's LogicalForm.predicate is always the
     verb's literal SURFACE token as it appeared in the sentence, not a lemma, so every caller here lemmatizes it first (lexicon.lemmatize): skipping that step is what used to double-inflect
-    an already-inflected surface form into things like "kickeds".
+    an already-inflected surface form into things like "kickeds". Progressive tense is the one exception to "always use the lemma": `surface_form`, when given, is the ORIGINAL un-lemmatized
+    token ("walking"), already correctly spelled with its own "-ing": reusing it sidesteps needing a separate, error-prone "-ing" suffixation rule (doubled consonants, dropped silent "e")
+    for no real benefit, since the correct spelling was already sitting right there in the sentence.
     """
     if tense == "pluperfect":
         return f"had not {verb_lemma}" if is_negated else f"had {verb_lemma}"
+    if tense == "progressive":
+        progressive_form = surface_form or f"{verb_lemma}ing"
+        return f"was not {progressive_form}" if is_negated else f"was {progressive_form}"
     if tense == "past":
         return f"did not {verb_lemma}" if is_negated else f"did {verb_lemma}"
     if tense == "future":
@@ -143,25 +148,35 @@ def _realize_clausal(logical_form: LogicalForm, embedded_form: LogicalForm, lexi
     predicate_word = logical_form.predicate.lower()
     subject_phrase = _realize_subject_phrase(str(logical_form.arguments[0]), lexicon, capitalize = capitalize_subject)
     verb_lemma = lexicon.lemmatize(predicate_word) or predicate_word
-    verb_phrase = _realize_verb_phrase(verb_lemma, logical_form.tense, logical_form.is_negated)
+    verb_phrase = _realize_verb_phrase(verb_lemma, logical_form.tense, logical_form.is_negated, surface_form = predicate_word)
     embedded_clause = embedded_sentence.rstrip(".?!")
     return f"{subject_phrase} {verb_phrase} that {embedded_clause}."
 
 def realize_logical_form(logical_form: Optional[LogicalForm], lexicon: Any, capitalize_subject: bool = True) -> Optional[str]:
     """
-    Builds a real English sentence directly from a single LogicalForm, or returns None if the form's shape isn't one of the closed patterns this realizer covers yet (idiom-tagged
-    predicates, or anything with an unexpected argument count): a clean signal for the caller to fall back to the deterministic formatter rather than guess at a malformed sentence.
-    A coordinated result (a List[LogicalForm], Phase 2.4) is deliberately NOT accepted here: see _realize_coordinated below, which calls back into this function once per conjunct.
+    Builds a real English sentence directly from a single LogicalForm, or returns None if the form's shape isn't one of the closed patterns this realizer covers yet (anything with
+    an unexpected argument count): a clean signal for the caller to fall back to the deterministic formatter rather than guess at a malformed sentence. A coordinated result (a
+    List[LogicalForm], Phase 2.4) is deliberately NOT accepted here: see _realize_coordinated below, which calls back into this function once per conjunct.
+
+    An idiom-tagged predicate ("IDIOM:kick_bucket") is NOT rejected (loose-ends cleanup, Sub-step L4: it used to be, falling through to the deterministic formatter, which leaked the
+    raw tag straight into user-facing text): its literal trigger verb is recovered from the tag itself and realized exactly like an ordinary verb sentence using the existing
+    argument list unchanged (the idiom's own object survives as a real argument, confirmed during investigation), producing the idiom's own correct literal surface form ("John
+    kicked the bucket.") rather than a crash or a leaked tag. Deliberately does NOT paraphrase into the idiom's NSM meaning here: that stays the transparency view's job via the
+    separate `idiom_meaning` payload field (core/pipeline.py's `_attach_idiom_meaning`), matching the "attach an explanation, don't redirect the primary output" pattern already used
+    everywhere else in this project.
 
     `capitalize_subject` defaults to True (the ordinary case: this LogicalForm is realized as a standalone, sentence-initial utterance) but is passed as False by two callers that
     splice this function's output into a non-initial position instead: _realize_coordinated, for every conjunct after the first, and _realize_clausal, for the embedded clause
     spliced in after "that". Only phrases that are ONLY capitalized by virtue of being sentence-initial (a common noun's "The", a pronoun, a wh-word) respond to this; a proper
     noun's own capitalization (core/parser.py's `proper_noun` category) is inherent to the word and stays capitalized either way: see _realize_subject_phrase's own docstring.
     """
-    if logical_form is None or isinstance(logical_form, list) or logical_form.predicate.startswith("IDIOM:"):
+    if logical_form is None or isinstance(logical_form, list):
         return None
 
     predicate_word = logical_form.predicate.lower()
+    if predicate_word.startswith("idiom:"):
+        predicate_word = predicate_word[len("idiom:"):].split("_")[0]
+
     negation_word = "not " if logical_form.is_negated else ""
     copula = _COPULA_FOR_TENSE.get(logical_form.tense, "is")
     end_punctuation = "?" if _contains_wh_word(logical_form.arguments) else "."
@@ -187,9 +202,12 @@ def realize_logical_form(logical_form: Optional[LogicalForm], lexicon: Any, capi
             return None
         subject_phrase = _realize_subject_phrase(str(logical_form.arguments[0]), lexicon, capitalize = capitalize_subject)
         verb_lemma = lexicon.lemmatize(predicate_word) or predicate_word
-        verb_phrase = _realize_verb_phrase(verb_lemma, logical_form.tense, logical_form.is_negated)
-        remaining_objects = [str(arg) for arg in logical_form.arguments[1:]]
-        object_phrase = f" the {remaining_objects[0]}" if remaining_objects else ""
+        verb_phrase = _realize_verb_phrase(verb_lemma, logical_form.tense, logical_form.is_negated, surface_form = predicate_word)
+        # Every remaining argument (not just the first) is realized in order via _realize_subject_phrase, so a ditransitive's second object is no
+        # longer silently dropped, and a proper-noun indirect object ("Mary") is no longer wrongly given a common noun's "the" (loose-ends cleanup,
+        # Sub-step L4). A double-object construction ("gave Mary the book") needs no "and"/comma between them, just ordinary juxtaposition.
+        object_phrases = [_realize_subject_phrase(str(arg), lexicon, capitalize = False) for arg in logical_form.arguments[1:]]
+        object_phrase = f" {' '.join(object_phrases)}" if object_phrases else ""
         return f"{subject_phrase} {verb_phrase}{object_phrase}{end_punctuation}"
 
     # Predicative adjective (or an unknown-category predicate: the same fallback shape used when a word's category can't be determined, e.g. a provisional induced word).

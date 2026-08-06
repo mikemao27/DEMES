@@ -905,6 +905,10 @@ class ChartParser:
         tokens_present = {leaf.token for leaf in leaves}
         if tokens_present & PLUPERFECT_AUX:
             return "pluperfect"
+        if tokens_present & COPULA_PAST and any(
+            self.lexicon.detect_inflection(leaf.token) == "progressive" for leaf in leaves
+        ):
+            return "progressive"
         if tokens_present & (COPULA_PAST | PAST_AUX):
             return "past"
         if tokens_present & FUTURE_MARKERS:
