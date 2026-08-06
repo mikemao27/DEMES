@@ -7,7 +7,7 @@ Here, we provide a working reading list on building artificial intelligence that
 
 ## Papers
 * [Google - "Attention is All You Need" (2023)](https://arxiv.org/pdf/1706.03762)
-* [Develin et al. - "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding (2019)](https://arxiv.org/pdf/1810.04805)
+* [Develin et al. - "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding" (2019)](https://arxiv.org/pdf/1810.04805)
 * [Mikolov et al. - "Efficient Estimation of Word Representations in Vector Space" (2013)](https://arxiv.org/pdf/1301.3781)
 * [Pennington et al. - "GloVe: Global Vectors for Word Representation" (2014)](https://aclanthology.org/D14-1162.pdf)
 * [Socher et al. - "Recursive Deep Models for Semantic Compositionality Over a Sentiment Treebank" (2013)](https://aclanthology.org/D13-1170.pdf)
